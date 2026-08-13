@@ -112,32 +112,40 @@ export default function FlowCanvas({
 
   // Measure node dimensions after render
   useEffect(() => {
-    const rects = new Map<string, DOMRect>();
-    nodes.forEach((n) => {
-      const el = document.querySelector(`[data-node-id="${n.id}"]`);
-      if (el) {
-        const body = el.querySelector("div");
-        if (body) rects.set(n.id, body.getBoundingClientRect());
-      }
-    });
-    setNodeRects(rects);
-  }, [nodes]);
+    // Small delay to ensure DOM updates applied before measurement
+    setTimeout(() => {
+      const rects = new Map<string, DOMRect>();
+      nodes.forEach((n) => {
+        const el = document.querySelector(`[data-node-id="${n.id}"]`);
+        if (el) {
+          const body = el.querySelector("div");
+          if (body) rects.set(n.id, body.getBoundingClientRect());
+        }
+      });
+      setNodeRects(rects);
+    }, 50);
+  }, [nodes, viewMode]);
 
-  // Fit view on mount
+  // Fit view on mount and on viewMode toggle
   useEffect(() => {
-    fitView();
+    setTimeout(fitView, 100); // Give DOM a moment to adjust
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [viewMode]);
 
   const fitView = useCallback(() => {
     if (!cwRef.current || nodes.length === 0) return;
     const r = cwRef.current.getBoundingClientRect();
+    const scaleX = viewMode === "detailed" ? 1.2 : 1;
+    const scaleY = viewMode === "detailed" ? 1.8 : 1;
+    
     let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
     nodes.forEach((n) => {
-      x1 = Math.min(x1, n.x);
-      y1 = Math.min(y1, n.y);
-      x2 = Math.max(x2, n.x + 240);
-      y2 = Math.max(y2, n.y + 100);
+      const nx = n.x * scaleX;
+      const ny = n.y * scaleY;
+      x1 = Math.min(x1, nx);
+      y1 = Math.min(y1, ny);
+      x2 = Math.max(x2, nx + (viewMode === "detailed" ? 320 : 240));
+      y2 = Math.max(y2, ny + (viewMode === "detailed" ? 250 : 100));
     });
     const w = x2 - x1 + 140;
     const h = y2 - y1 + 140;
@@ -147,7 +155,7 @@ export default function FlowCanvas({
       y: (r.height - h * newZoom) / 2 - y1 * newZoom + 70 * newZoom,
     });
     setZoom(newZoom);
-  }, [nodes]);
+  }, [nodes, viewMode]);
 
   // Mouse move / up
   useEffect(() => {
@@ -157,9 +165,13 @@ export default function FlowCanvas({
         const dx = (e.clientX - d.sx) / zoom;
         const dy = (e.clientY - d.sy) / zoom;
         if (Math.abs(dx) > 2 || Math.abs(dy) > 2) d.moved = true;
+        
+        const scaleX = viewMode === "detailed" ? 1.2 : 1;
+        const scaleY = viewMode === "detailed" ? 1.8 : 1;
+        
         setNodes((prev) =>
           prev.map((n) =>
-            n.id === d.node.id ? { ...n, x: d.ox + dx, y: d.oy + dy } : n
+            n.id === d.node.id ? { ...n, x: d.ox + dx / scaleX, y: d.oy + dy / scaleY } : n
           )
         );
       }
@@ -192,7 +204,7 @@ export default function FlowCanvas({
       window.removeEventListener("mousemove", handleMove);
       window.removeEventListener("mouseup", handleUp);
     };
-  }, [zoom]);
+  }, [zoom, viewMode]);
 
   // Wheel zoom
   useEffect(() => {
@@ -281,11 +293,15 @@ export default function FlowCanvas({
       ok: "Success",
       fail: "Failed",
     };
+    
+    const scaleX = viewMode === "detailed" ? 1.2 : 1;
+    const scaleY = viewMode === "detailed" ? 1.8 : 1;
+    
     const n: FlowNode = {
       id: generateNodeId(),
       type,
-      x: cx - 97,
-      y: cy - 40,
+      x: (cx - 97) / scaleX,
+      y: (cy - 40) / scaleY,
       label: labels[type],
       detail: "Double-click to edit",
     };
@@ -540,36 +556,47 @@ export default function FlowCanvas({
           }}
         >
           <Connections
-            nodes={nodes}
+            nodes={nodes.map((n) => ({
+              ...n,
+              x: viewMode === "detailed" ? n.x * 1.2 : n.x,
+              y: viewMode === "detailed" ? n.y * 1.8 : n.y,
+            }))}
             connections={connections}
             onContextMenu={handleConnectionContextMenu}
             nodeElements={nodeRects}
           />
           <div className="relative z-10">
-            {nodes.map((node) => (
-              <FlowNodeCard
-                key={node.id}
-                node={node}
-                isSelected={selectedId === node.id}
-                viewMode={viewMode}
-                onMouseDown={(e) => {
-                  setSelectedId(node.id);
-                  dragRef.current = {
-                    node,
-                    sx: e.clientX,
-                    sy: e.clientY,
-                    ox: node.x,
-                    oy: node.y,
-                    moved: false,
-                  };
-                }}
-                onDoubleClick={() => setEditNode(node)}
-                onContextMenu={(e) => handleNodeContextMenu(e, node)}
-                onPortMouseDown={(e, port) => {
-                  connRef.current = { fromId: node.id, fromPort: port };
-                }}
-              />
-            ))}
+            {nodes.map((node) => {
+              const renderNode = {
+                ...node,
+                x: viewMode === "detailed" ? node.x * 1.2 : node.x,
+                y: viewMode === "detailed" ? node.y * 1.8 : node.y,
+              };
+              return (
+                <FlowNodeCard
+                  key={node.id}
+                  node={renderNode}
+                  isSelected={selectedId === node.id}
+                  viewMode={viewMode}
+                  onMouseDown={(e) => {
+                    setSelectedId(node.id);
+                    dragRef.current = {
+                      node, // original node
+                      sx: e.clientX,
+                      sy: e.clientY,
+                      ox: node.x,
+                      oy: node.y,
+                      moved: false,
+                    };
+                  }}
+                  onDoubleClick={() => setEditNode(node)}
+                  onContextMenu={(e) => handleNodeContextMenu(e, node)}
+                  onPortMouseDown={(e, port) => {
+                    connRef.current = { fromId: node.id, fromPort: port };
+                  }}
+                />
+              );
+            })}
           </div>
         </div>
 
