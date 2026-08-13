@@ -7,6 +7,11 @@ export interface FlowNode {
   y: number;
   label: string;
   detail: string;
+  agentSteps?: string[];
+  tools?: string[];
+  sla?: string;
+  inputs?: string;
+  outputs?: string;
 }
 
 export type ConnType = "" | "cyes" | "cno" | "camber";
@@ -22,3 +27,14 @@ export interface FlowData {
   nodes: FlowNode[];
   connections: FlowConnection[];
 }
+
+export interface DiagramMetadata {
+  slug: string;
+  title: string;
+  description: string;
+  nodeCount: number;
+  color: string;
+  isCustom?: boolean;
+  updatedAt?: string;
+}
+
