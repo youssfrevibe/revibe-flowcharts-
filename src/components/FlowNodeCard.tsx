@@ -14,7 +14,7 @@ const TYPE_LABELS: Record<NodeType, string> = {
 };
 
 /** Standard flowchart silhouettes per node type. */
-type Shape = "process" | "terminator" | "decision" | "subprocess";
+type Shape = "process" | "terminator" | "decision" | "subprocess" | "note";
 const SHAPE: Record<NodeType, Shape> = {
   start: "terminator",
   ok: "terminator",
@@ -196,6 +196,29 @@ export default function FlowNodeCard({
           <div className="text-[13px] font-bold leading-snug mt-0.5">{node.label}</div>
           {node.detail && (
             <div className="text-[10.5px] leading-relaxed text-white/80 mt-0.5">{node.detail}</div>
+          )}
+        </div>
+        {ports}
+      </div>
+    );
+  }
+
+  /* --------------------------- NOTE (sticky) --------------------------- */
+  if (shape === "note") {
+    return (
+      <div {...wrapperProps}>
+        <div
+          className={`rounded-sm shadow-md min-w-[150px] max-w-[240px] px-4 py-3 transform -rotate-1 hover:rotate-0 transition-transform ${cardStyle} ${
+            isSelected ? "ring-2 ring-offset-2 ring-yellow-400 shadow-xl" : ""
+          }`}
+        >
+          <div className="text-[12.5px] leading-relaxed font-medium whitespace-pre-wrap">
+            {node.label}
+          </div>
+          {node.detail && (
+            <div className="text-[11px] leading-relaxed opacity-75 mt-2 italic">
+              {node.detail}
+            </div>
           )}
         </div>
         {ports}
