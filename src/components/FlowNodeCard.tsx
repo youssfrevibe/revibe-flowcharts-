@@ -10,6 +10,7 @@ const TYPE_LABELS: Record<NodeType, string> = {
   sub: "Sub-process",
   ok: "Outcome",
   fail: "Outcome",
+  note: "Comment / Note",
 };
 
 /** Standard flowchart silhouettes per node type. */
@@ -21,6 +22,7 @@ const SHAPE: Record<NodeType, Shape> = {
   step: "process",
   sub: "subprocess",
   decision: "decision",
+  note: "note",
 };
 
 const TYPE_STYLES: Record<NodeType, string> = {
@@ -30,6 +32,7 @@ const TYPE_STYLES: Record<NodeType, string> = {
   sub: "bg-blue-700 border-blue-600 border-dashed text-white",
   ok: "bg-emerald-700 border-emerald-700 text-white",
   fail: "bg-red-600 border-red-600 text-white",
+  note: "bg-yellow-100 dark:bg-yellow-900/40 border-yellow-300 dark:border-yellow-700/60 text-yellow-900 dark:text-yellow-100",
 };
 
 /** Optional per-node accent overrides (set via the edit modal). */
@@ -52,6 +55,7 @@ const FILL: Record<NodeType, string> = {
   decision: "#b45309",
   sub: "#1d4ed8",
   fail: "#dc2626",
+  note: "#fef9c3",
 };
 const ACCENT_FILL: Record<string, string> = {
   emerald: "#047857",
@@ -99,6 +103,7 @@ export default function FlowNodeCard({
     [onMouseDown]
   );
 
+  const detailColor = node.type === "note" ? "text-yellow-800/80 dark:text-yellow-200/80" : "text-white/80";
   const isDetailed = viewMode === "detailed";
   const shape = SHAPE[node.type];
   const cardStyle = (node.color && ACCENTS[node.color]) || TYPE_STYLES[node.type];

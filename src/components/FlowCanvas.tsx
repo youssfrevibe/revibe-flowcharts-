@@ -280,6 +280,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
         sub: "Sub-process",
         ok: "Success",
         fail: "Failed",
+        note: "Type your comment here...",
       };
       let pos = at;
       if (!pos) {
@@ -1172,6 +1173,9 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
         <ToolBtn onClick={() => addNode("fail")} title="Add Fail">
           <circle cx="12" cy="12" r="9" />
           <path d="M15 9l-6 6M9 9l6 6" />
+        </ToolBtn>
+        <ToolBtn onClick={() => addNode("note")} title="Add Comment / Note">
+          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
         </ToolBtn>
         <div className="w-px h-5 bg-zinc-200 dark:bg-zinc-700 mx-1" />
         <ToolBtn onClick={runAutoLayout} title="Auto-layout (Ctrl+L)">

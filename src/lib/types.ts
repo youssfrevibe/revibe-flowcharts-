@@ -1,4 +1,4 @@
-export type NodeType = "start" | "step" | "decision" | "sub" | "ok" | "fail";
+export type NodeType = "start" | "step" | "decision" | "sub" | "ok" | "fail" | "note";
 
 export interface FlowNode {
   id: string;
