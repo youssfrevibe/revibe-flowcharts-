@@ -1,30 +1,36 @@
 "use client";
 
-import { use } from "react";
+import { use, useEffect, useState } from "react";
 import FlowCanvas from "@/components/FlowCanvas";
-import { loadFlowchartData, getAllDiagrams } from "@/lib/diagram-store";
+import { getCachedDiagrams, fetchCloudDiagrams } from "@/lib/diagram-store";
+import { DiagramMetadata } from "@/lib/types";
 
-export default function DynamicDiagramPage({
-  params,
-}: {
-  params: Promise<{ slug: string }>;
-}) {
+export default function DynamicDiagramPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = use(params);
-  const diagrams = getAllDiagrams();
-  const meta = diagrams.find((d) => d.slug === slug);
+  // Start undefined so server and client first render match (avoids hydration mismatch);
+  // cached/cloud metadata is loaded after mount.
+  const [meta, setMeta] = useState<DiagramMetadata | undefined>(undefined);
 
-  const title = meta ? meta.title : "Custom Process Flowchart";
-  const subtitle = meta ? meta.description : "Interactive process editor";
-  const initialData = loadFlowchartData(slug);
+  useEffect(() => {
+    const cached = getCachedDiagrams().find((d) => d.slug === slug);
+    if (cached) setMeta(cached);
+    let alive = true;
+    fetchCloudDiagrams().then((list) => {
+      if (!alive) return;
+      const m = list.find((d) => d.slug === slug);
+      if (m) setMeta(m);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [slug]);
 
   return (
     <FlowCanvas
-      title={title}
-      subtitle={subtitle}
-      initialNodes={initialData.nodes}
-      initialConnections={initialData.connections}
-      storageKey={slug}
-      exportFilename={`${slug}.json`}
+      slug={slug}
+      title={meta?.title || "Process Flowchart"}
+      subtitle={meta?.description || "Interactive process editor"}
+      exportFilename={slug}
     />
   );
 }

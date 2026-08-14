@@ -27,6 +27,7 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
   const [tools, setTools] = useState("");
   const [sla, setSla] = useState("");
   const [agentSteps, setAgentSteps] = useState("");
+  const [color, setColor] = useState<string>("");
   const labelRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -37,6 +38,7 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
       setTools((node.tools || []).join(", "));
       setSla(node.sla || "");
       setAgentSteps((node.agentSteps || []).join("\n"));
+      setColor(node.color || "");
       setTimeout(() => labelRef.current?.focus(), 80);
     }
   }, [node]);
@@ -62,8 +64,20 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
       tools: parsedTools,
       sla: sla.trim(),
       agentSteps: parsedSteps,
+      color: color || undefined,
     });
   };
+
+  const SWATCHES: { key: string; cls: string }[] = [
+    { key: "", cls: "bg-zinc-500" },
+    { key: "emerald", cls: "bg-emerald-600" },
+    { key: "blue", cls: "bg-blue-600" },
+    { key: "amber", cls: "bg-amber-600" },
+    { key: "rose", cls: "bg-rose-600" },
+    { key: "violet", cls: "bg-violet-600" },
+    { key: "cyan", cls: "bg-cyan-600" },
+    { key: "slate", cls: "bg-slate-600" },
+  ];
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") onClose();
@@ -108,6 +122,25 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
                 </option>
               ))}
             </select>
+          </div>
+
+          <div>
+            <label className="block text-[10.5px] font-bold uppercase tracking-wider text-zinc-400 mb-1.5">
+              Accent Color
+            </label>
+            <div className="flex items-center gap-2">
+              {SWATCHES.map((s) => (
+                <button
+                  key={s.key || "default"}
+                  type="button"
+                  onClick={() => setColor(s.key)}
+                  title={s.key || "Default (by type)"}
+                  className={`w-6 h-6 rounded-full ${s.cls} transition-transform ${
+                    color === s.key ? "ring-2 ring-offset-2 ring-emerald-500 ring-offset-white dark:ring-offset-zinc-800 scale-110" : "hover:scale-110"
+                  }`}
+                />
+              ))}
+            </div>
           </div>
 
           <div>

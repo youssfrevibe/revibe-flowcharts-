@@ -1,6 +1,7 @@
-import { FlowNode, FlowConnection, DiagramMetadata, FlowData } from "./types";
+import { DiagramMetadata, FlowData } from "./types";
 import { getInitialNodes, getInitialConnections } from "./initial-data";
 import { getKBNodes, getKBConnections } from "./kb-data";
+import { backfillConnIds } from "./ops";
 
 export const BUILTIN_DIAGRAMS: DiagramMetadata[] = [
   {
@@ -19,124 +20,158 @@ export const BUILTIN_DIAGRAMS: DiagramMetadata[] = [
   },
 ];
 
-const CUSTOM_LIST_KEY = "revibe_flowchart_custom_list";
+const BUILTIN_SLUGS = new Set(BUILTIN_DIAGRAMS.map((d) => d.slug));
+const LIST_CACHE_KEY = "revibe_flowchart_list_cache";
+const dataCacheKey = (slug: string) => `flowchart-${slug}`;
 
 export function generateNodeId(): string {
-  return `n_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+  return `n_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
 export function getDefaultData(slug: string): FlowData {
   if (slug === "revibe-kb") {
-    return { nodes: getKBNodes(), connections: getKBConnections() };
+    return normalize({ nodes: getKBNodes(), connections: getKBConnections() });
   }
   if (slug === "order-to-delivery") {
-    return { nodes: getInitialNodes(), connections: getInitialConnections() };
+    return normalize({ nodes: getInitialNodes(), connections: getInitialConnections() });
   }
-  return {
+  return normalize({
     nodes: [
-      { id: "n1", type: "start", x: 400, y: 50, label: "Start Process", detail: "Describe the beginning of this process" },
-      { id: "n2", type: "step", x: 400, y: 180, label: "First Action Step", detail: "Describe what happens here" },
-      { id: "n3", type: "ok", x: 400, y: 320, label: "Process Completed", detail: "End of flow" },
+      { id: "n1", type: "start", x: 560, y: 80, label: "Start Process", detail: "Describe the beginning of this process" },
+      { id: "n2", type: "step", x: 560, y: 220, label: "First Action Step", detail: "Describe what happens here" },
+      { id: "n3", type: "ok", x: 560, y: 360, label: "Process Completed", detail: "End of flow" },
     ],
     connections: [
       { from: "n1", to: "n2", label: "", type: "" },
       { from: "n2", to: "n3", label: "Success", type: "cyes" },
     ],
-  };
+  });
 }
 
-export function loadFlowchartData(slug: string): FlowData {
-  if (typeof window === "undefined") return getDefaultData(slug);
+function normalize(data: FlowData): FlowData {
+  return { nodes: data.nodes || [], connections: backfillConnIds(data.connections || []) };
+}
+
+/* ----------------------------- local cache ----------------------------- */
+
+export function getCachedData(slug: string): FlowData | null {
+  if (typeof window === "undefined") return null;
   try {
-    const saved = localStorage.getItem(`flowchart-${slug}`);
+    const saved = localStorage.getItem(dataCacheKey(slug));
     if (saved) {
       const parsed = JSON.parse(saved);
-      if (parsed && Array.isArray(parsed.nodes)) {
-        return {
-          nodes: parsed.nodes,
-          connections: parsed.connections || [],
-        };
-      }
+      if (parsed && Array.isArray(parsed.nodes)) return normalize(parsed);
     }
-  } catch (err) {
-    console.error("Failed to load flowchart from local storage:", err);
-  }
-  return getDefaultData(slug);
-}
-
-export function saveFlowchartData(slug: string, data: FlowData): void {
-  if (typeof window === "undefined") return;
-  // Local storage save
-  try {
-    localStorage.setItem(`flowchart-${slug}`, JSON.stringify(data));
-    const customList = getCustomDiagrams();
-    const idx = customList.findIndex((d) => d.slug === slug);
-    if (idx !== -1) {
-      customList[idx].nodeCount = data.nodes.length;
-      customList[idx].updatedAt = new Date().toISOString();
-      localStorage.setItem(CUSTOM_LIST_KEY, JSON.stringify(customList));
-    }
-  } catch (err) {
-    console.error("Failed to save flowchart to local storage:", err);
-  }
-
-  // Cloud API async save
-  const meta = getAllDiagrams().find((d) => d.slug === slug);
-  fetch("/api/flowcharts", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      slug,
-      title: meta?.title || slug,
-      description: meta?.description || "",
-      nodes: data.nodes,
-      connections: data.connections,
-      color: meta?.color || "bg-purple-700",
-      isCustom: meta?.isCustom ?? true,
-    }),
-  }).catch(() => {});
-}
-
-export function resetFlowchartData(slug: string): FlowData {
-  const defaultData = getDefaultData(slug);
-  if (typeof window !== "undefined") {
-    localStorage.removeItem(`flowchart-${slug}`);
-  }
-  saveFlowchartData(slug, defaultData);
-  return defaultData;
-}
-
-export function getCustomDiagrams(): DiagramMetadata[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(CUSTOM_LIST_KEY);
-    if (raw) return JSON.parse(raw);
   } catch {}
-  return [];
+  return null;
 }
 
-export function getAllDiagrams(): DiagramMetadata[] {
-  const custom = getCustomDiagrams();
-  const builtInMap = BUILTIN_DIAGRAMS.map((d) => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem(`flowchart-${d.slug}`);
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          if (parsed?.nodes) {
-            return { ...d, nodeCount: parsed.nodes.length };
-          }
-        } catch {}
-      }
+export function cacheData(slug: string, data: FlowData): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(dataCacheKey(slug), JSON.stringify(data));
+  } catch {}
+}
+
+/** Instant initial data for first paint: cache → builtin default → null-for-custom starter. */
+export function getInitialData(slug: string): FlowData {
+  return getCachedData(slug) || getDefaultData(slug);
+}
+
+/* ----------------------------- cloud reads ----------------------------- */
+
+/** Fetches the authoritative document from the cloud. Returns null if it doesn't exist there yet. */
+export async function fetchCloudData(slug: string): Promise<FlowData | null> {
+  try {
+    const res = await fetch(`/api/flowcharts/${slug}`, { cache: "no-store" });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const fc = json.flowchart;
+    if (fc && Array.isArray(fc.nodes)) {
+      const data = normalize({ nodes: fc.nodes, connections: fc.connections || [] });
+      cacheData(slug, data);
+      return data;
     }
-    return d;
-  });
-  return [...builtInMap, ...custom];
+  } catch {}
+  return null;
 }
 
-export function createCustomDiagram(title: string, description: string): DiagramMetadata {
-  const slug = `custom-${Date.now()}`;
-  const newMeta: DiagramMetadata = {
+/* ----------------------------- cloud writes ---------------------------- */
+
+/** Upserts a document to the cloud. Resolves to true on success. */
+export async function saveToCloud(
+  slug: string,
+  data: FlowData,
+  meta?: Partial<DiagramMetadata>
+): Promise<boolean> {
+  cacheData(slug, data);
+  const known = getCachedDiagrams().find((d) => d.slug === slug);
+  try {
+    const res = await fetch("/api/flowcharts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        slug,
+        title: meta?.title || known?.title || slug,
+        description: meta?.description ?? known?.description ?? "",
+        nodes: data.nodes,
+        connections: data.connections,
+        color: meta?.color || known?.color || (BUILTIN_SLUGS.has(slug) ? "bg-emerald-700" : "bg-purple-700"),
+        isCustom: meta?.isCustom ?? known?.isCustom ?? !BUILTIN_SLUGS.has(slug),
+      }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/* ------------------------------ diagram list --------------------------- */
+
+export function getCachedDiagrams(): DiagramMetadata[] {
+  if (typeof window === "undefined") return BUILTIN_DIAGRAMS;
+  try {
+    const raw = localStorage.getItem(LIST_CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length) return parsed;
+    }
+  } catch {}
+  return BUILTIN_DIAGRAMS;
+}
+
+function mergeList(cloud: DiagramMetadata[]): DiagramMetadata[] {
+  const cloudBySlug = new Map(cloud.map((d) => [d.slug, d]));
+  const builtin = BUILTIN_DIAGRAMS.map((b) => {
+    const c = cloudBySlug.get(b.slug);
+    return c ? { ...b, nodeCount: c.nodeCount ?? b.nodeCount, updatedAt: c.updatedAt } : b;
+  });
+  const custom = cloud
+    .filter((d) => !BUILTIN_SLUGS.has(d.slug))
+    .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  return [...builtin, ...custom];
+}
+
+/** Cloud-authoritative list of all diagrams (builtin + custom), cached for offline/instant paint. */
+export async function fetchCloudDiagrams(): Promise<DiagramMetadata[]> {
+  try {
+    const res = await fetch("/api/flowcharts", { cache: "no-store" });
+    if (res.ok) {
+      const json = await res.json();
+      const cloud: DiagramMetadata[] = json.flowcharts || [];
+      const merged = mergeList(cloud);
+      try {
+        localStorage.setItem(LIST_CACHE_KEY, JSON.stringify(merged));
+      } catch {}
+      return merged;
+    }
+  } catch {}
+  return getCachedDiagrams();
+}
+
+export async function createCustomDiagram(title: string, description: string): Promise<DiagramMetadata> {
+  const slug = `custom-${Date.now().toString(36)}`;
+  const meta: DiagramMetadata = {
     slug,
     title: title || "New Process Flow",
     description: description || "Custom workflow mapping",
@@ -145,20 +180,31 @@ export function createCustomDiagram(title: string, description: string): Diagram
     isCustom: true,
     updatedAt: new Date().toISOString(),
   };
-  const list = getCustomDiagrams();
-  list.push(newMeta);
-  if (typeof window !== "undefined") {
-    localStorage.setItem(CUSTOM_LIST_KEY, JSON.stringify(list));
-    saveFlowchartData(slug, getDefaultData(slug));
-  }
-  return newMeta;
+  const data = getDefaultData(slug);
+  await saveToCloud(slug, data, meta);
+  // Optimistically update cache list.
+  const list = getCachedDiagrams().filter((d) => d.slug !== slug);
+  try {
+    localStorage.setItem(LIST_CACHE_KEY, JSON.stringify([...list, meta]));
+  } catch {}
+  return meta;
 }
 
-export function deleteCustomDiagram(slug: string): void {
-  if (typeof window === "undefined") return;
-  const list = getCustomDiagrams().filter((d) => d.slug !== slug);
-  localStorage.setItem(CUSTOM_LIST_KEY, JSON.stringify(list));
-  localStorage.removeItem(`flowchart-${slug}`);
+export async function deleteCustomDiagram(slug: string): Promise<void> {
+  if (typeof window !== "undefined") {
+    localStorage.removeItem(dataCacheKey(slug));
+    const list = getCachedDiagrams().filter((d) => d.slug !== slug);
+    try {
+      localStorage.setItem(LIST_CACHE_KEY, JSON.stringify(list));
+    } catch {}
+  }
+  try {
+    await fetch(`/api/flowcharts/${slug}`, { method: "DELETE" });
+  } catch {}
+}
 
-  fetch(`/api/flowcharts/${slug}`, { method: "DELETE" }).catch(() => {});
+export async function resetToDefault(slug: string): Promise<FlowData> {
+  const data = getDefaultData(slug);
+  await saveToCloud(slug, data);
+  return data;
 }

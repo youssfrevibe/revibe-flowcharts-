@@ -21,13 +21,16 @@ const TYPE_STYLES: Record<NodeType, string> = {
   fail: "bg-red-600 border-red-600 text-white",
 };
 
-const HEADER_STYLES: Record<NodeType, string> = {
-  start: "text-white/60 border-white/15",
-  step: "text-white/60 border-white/15",
-  decision: "text-white/60 border-white/15",
-  sub: "text-white/60 border-white/15",
-  ok: "text-white/60 border-white/15",
-  fail: "text-white/60 border-white/15",
+/** Optional per-node accent overrides (set via the edit modal). */
+export const ACCENTS: Record<string, string> = {
+  emerald: "bg-emerald-700 border-emerald-700 text-white",
+  blue: "bg-blue-700 border-blue-600 text-white",
+  amber: "bg-amber-700 border-amber-600 text-white",
+  rose: "bg-rose-600 border-rose-600 text-white",
+  violet: "bg-violet-700 border-violet-600 text-white",
+  cyan: "bg-cyan-700 border-cyan-600 text-white",
+  slate: "bg-slate-700 border-slate-600 text-white",
+  zinc: "bg-zinc-700 border-zinc-600 text-white",
 };
 
 interface Props {
@@ -38,6 +41,7 @@ interface Props {
   onDoubleClick: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
   onPortMouseDown: (e: React.MouseEvent, port: string) => void;
+  onPortMouseUp: (e: React.MouseEvent, port: string) => void;
 }
 
 export default function FlowNodeCard({
@@ -48,6 +52,7 @@ export default function FlowNodeCard({
   onDoubleClick,
   onContextMenu,
   onPortMouseDown,
+  onPortMouseUp,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -55,15 +60,14 @@ export default function FlowNodeCard({
     (e: React.MouseEvent) => {
       if ((e.target as HTMLElement).dataset.port) return;
       if (e.button !== 0) return;
-      e.preventDefault();
       e.stopPropagation();
       onMouseDown(e);
     },
     [onMouseDown]
   );
 
-  const detailColor = "text-white/80";
   const isDetailed = viewMode === "detailed";
+  const cardStyle = (node.color && ACCENTS[node.color]) || TYPE_STYLES[node.type];
 
   return (
     <div
@@ -79,19 +83,13 @@ export default function FlowNodeCard({
       onContextMenu={onContextMenu}
     >
       <div
-        className={`rounded-[10px] border shadow-sm min-w-[200px] transition-all ${
+        className={`rounded-[10px] border shadow-sm min-w-[200px] transition-shadow ${
           isDetailed ? "max-w-[320px]" : "max-w-[265px]"
-        } ${TYPE_STYLES[node.type]} ${
-          isSelected
-            ? "ring-2 ring-emerald-400 shadow-xl scale-[1.02]"
-            : ""
+        } ${cardStyle} ${
+          isSelected ? "ring-2 ring-offset-1 ring-emerald-400 ring-offset-transparent shadow-xl" : ""
         }`}
       >
-        <div
-          className={`px-3.5 pt-2 pb-1 text-[9.5px] font-bold uppercase tracking-wider border-b flex items-center justify-between ${
-            HEADER_STYLES[node.type]
-          }`}
-        >
+        <div className="px-3.5 pt-2 pb-1 text-[9.5px] font-bold uppercase tracking-wider border-b border-white/15 text-white/60 flex items-center justify-between">
           <span>{TYPE_LABELS[node.type]}</span>
           {node.sla && (
             <span className="bg-black/30 px-1.5 py-0.5 rounded text-[8.5px] text-emerald-200 tracking-normal font-mono">
@@ -99,17 +97,12 @@ export default function FlowNodeCard({
             </span>
           )}
         </div>
-        <div className="px-3.5 pt-2.5 pb-1 text-[13px] font-bold leading-snug">
-          {node.label}
-        </div>
+        <div className="px-3.5 pt-2.5 pb-1 text-[13px] font-bold leading-snug">{node.label}</div>
         {node.detail && (
-          <div className={`px-3.5 pb-2 text-[11px] leading-relaxed ${detailColor}`}>
-            {node.detail}
-          </div>
+          <div className="px-3.5 pb-2 text-[11px] leading-relaxed text-white/80">{node.detail}</div>
         )}
 
-        {/* Detailed Anatomy View */}
-        {isDetailed && (
+        {isDetailed && (node.tools?.length || node.agentSteps?.length) ? (
           <div className="px-3.5 pb-3 pt-2 border-t border-white/20 space-y-2 bg-black/20 rounded-b-[9px]">
             {node.tools && node.tools.length > 0 && (
               <div className="flex flex-wrap gap-1">
@@ -123,7 +116,6 @@ export default function FlowNodeCard({
                 ))}
               </div>
             )}
-
             {node.agentSteps && node.agentSteps.length > 0 && (
               <div className="space-y-1 pt-1">
                 <div className="text-[9px] font-bold uppercase text-white/60 tracking-wider">
@@ -131,7 +123,10 @@ export default function FlowNodeCard({
                 </div>
                 <ul className="space-y-1">
                   {node.agentSteps.map((step, idx) => (
-                    <li key={idx} className="text-[10px] leading-snug flex items-start gap-1.5 text-white/90">
+                    <li
+                      key={idx}
+                      className="text-[10px] leading-snug flex items-start gap-1.5 text-white/90"
+                    >
                       <span className="text-emerald-300 font-bold shrink-0">{idx + 1}.</span>
                       <span>{step}</span>
                     </li>
@@ -140,11 +135,11 @@ export default function FlowNodeCard({
               </div>
             )}
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Ports */}
-      {["top", "bottom", "left", "right"].map((port) => {
+      {(["top", "bottom", "left", "right"] as const).map((port) => {
         const pos: Record<string, string> = {
           top: "-top-1.5 left-1/2 -translate-x-1/2",
           bottom: "-bottom-1.5 left-1/2 -translate-x-1/2",
@@ -156,20 +151,16 @@ export default function FlowNodeCard({
             key={port}
             data-port={port}
             data-node={node.id}
-            className={`absolute w-3 h-3 rounded-full bg-emerald-400 border-2 border-zinc-900 cursor-crosshair opacity-0 group-hover:opacity-100 hover:scale-130 transition-all z-20 ${pos[port]}`}
+            className={`absolute w-3 h-3 rounded-full bg-emerald-400 border-2 border-zinc-900 cursor-crosshair opacity-0 group-hover:opacity-100 hover:scale-125 transition-all z-20 ${pos[port]}`}
             onMouseDown={(e) => {
               e.preventDefault();
               e.stopPropagation();
               onPortMouseDown(e, port);
             }}
+            onMouseUp={(e) => onPortMouseUp(e, port)}
           />
         );
       })}
-
-      {/* Hover hint */}
-      <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] text-zinc-400 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-        Double-click to edit
-      </div>
     </div>
   );
 }

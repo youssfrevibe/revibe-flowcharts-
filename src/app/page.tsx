@@ -3,46 +3,59 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { DiagramMetadata } from "@/lib/types";
-import { BUILTIN_DIAGRAMS, getAllDiagrams, createCustomDiagram, deleteCustomDiagram } from "@/lib/diagram-store";
+import {
+  getCachedDiagrams,
+  fetchCloudDiagrams,
+  createCustomDiagram,
+  deleteCustomDiagram,
+  BUILTIN_DIAGRAMS,
+} from "@/lib/diagram-store";
 
 export default function Home() {
   const [diagrams, setDiagrams] = useState<DiagramMetadata[]>(BUILTIN_DIAGRAMS);
+  const [mounted, setMounted] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [creating, setCreating] = useState(false);
 
-  const refreshDiagrams = () => {
-    setDiagrams(getAllDiagrams());
+  const refresh = () => {
+    fetchCloudDiagrams().then((list) => {
+      setDiagrams(list);
+      setLoading(false);
+    });
   };
 
   useEffect(() => {
-    refreshDiagrams();
+    setMounted(true);
+    setDiagrams(getCachedDiagrams());
+    refresh();
+    const onFocus = () => refresh();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, []);
 
-  const handleCreate = (e: React.FormEvent) => {
+  const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
-    const created = createCustomDiagram(title.trim(), description.trim());
-    setShowModal(false);
-    setTitle("");
-    setDescription("");
-    refreshDiagrams();
+    if (!title.trim() || creating) return;
+    setCreating(true);
+    const created = await createCustomDiagram(title.trim(), description.trim());
     window.location.href = `/diagram/${created.slug}`;
   };
 
-  const handleDelete = (e: React.MouseEvent, slug: string) => {
+  const handleDelete = async (e: React.MouseEvent, slug: string) => {
     e.preventDefault();
     e.stopPropagation();
-    if (confirm("Are you sure you want to delete this custom flowchart?")) {
-      deleteCustomDiagram(slug);
-      refreshDiagrams();
+    if (confirm("Delete this flowchart for everyone? This cannot be undone.")) {
+      await deleteCustomDiagram(slug);
+      refresh();
     }
   };
 
   return (
     <div className="min-h-screen bg-zinc-100 dark:bg-zinc-900">
       <div className="max-w-3xl mx-auto px-6 py-14">
-        {/* Header */}
         <div className="flex items-center justify-between mb-10 pb-6 border-b border-zinc-200 dark:border-zinc-800">
           <div className="flex items-center gap-3.5">
             <div className="w-11 h-11 bg-emerald-700 dark:bg-emerald-600 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-md">
@@ -53,13 +66,13 @@ export default function Home() {
                 Revibe&apos;s Flowcharts
               </h1>
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                Interactive process maps & flowchart editor for Revibe operations
+                Live collaborative process maps — changes sync to everyone in real time
               </p>
             </div>
           </div>
           <button
             onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-700 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white font-medium text-xs rounded-xl shadow-sm transition-all"
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white font-medium text-xs rounded-xl shadow-sm transition-all"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
               <path d="M12 5v14M5 12h14" />
@@ -68,18 +81,17 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Flowchart List */}
         <div className="space-y-3">
           {diagrams.map((d) => (
             <Link
               key={d.slug}
               href={`/diagram/${d.slug}`}
-              className="flex items-center gap-4 p-5 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl hover:border-emerald-500 dark:hover:border-emerald-500 hover:shadow-md transition-all group relative"
+              className="flex items-center gap-4 p-5 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl hover:border-emerald-500 hover:shadow-md transition-all group relative"
             >
               <div
                 className={`w-11 h-11 ${d.color || "bg-emerald-700"} rounded-lg flex items-center justify-center text-white font-bold text-sm shrink-0 shadow-sm`}
               >
-                {d.title[0]}
+                {d.title[0]?.toUpperCase()}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
@@ -97,9 +109,7 @@ export default function Home() {
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <div className="text-[11px] text-zinc-400 tabular-nums shrink-0">
-                  {d.nodeCount} nodes
-                </div>
+                <div className="text-[11px] text-zinc-400 tabular-nums shrink-0">{d.nodeCount} nodes</div>
                 {d.isCustom && (
                   <button
                     onClick={(e) => handleDelete(e, d.slug)}
@@ -117,19 +127,18 @@ export default function Home() {
               </div>
             </Link>
           ))}
+          {loading && (
+            <div className="text-center text-xs text-zinc-400 py-4">Syncing from cloud…</div>
+          )}
         </div>
 
-        {/* Modal to Create Flowchart */}
         {showModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
             <div className="w-full max-w-md bg-white dark:bg-zinc-800 rounded-2xl border border-zinc-200 dark:border-zinc-700 shadow-2xl p-6">
-              <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
-                Create New Flowchart
-              </h2>
+              <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-1">Create New Flowchart</h2>
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-5">
-                Set up a new process mapping diagram for Revibe
+                It&apos;s instantly shared — teammates with the link edit it live.
               </p>
-
               <form onSubmit={handleCreate} className="space-y-4">
                 <div>
                   <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">
@@ -138,6 +147,7 @@ export default function Home() {
                   <input
                     type="text"
                     required
+                    autoFocus
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
                     placeholder="e.g. Returns & Warranty Claims Flow"
@@ -156,7 +166,6 @@ export default function Home() {
                     className="w-full px-3.5 py-2 text-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
-
                 <div className="flex justify-end gap-2 pt-3">
                   <button
                     type="button"
@@ -167,9 +176,10 @@ export default function Home() {
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 text-xs font-medium bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg transition-colors shadow-xs"
+                    disabled={creating}
+                    className="px-4 py-2 text-xs font-medium bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg transition-colors shadow-xs"
                   >
-                    Create & Open Editor
+                    {creating ? "Creating…" : "Create & Open Editor"}
                   </button>
                 </div>
               </form>

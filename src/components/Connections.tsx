@@ -1,43 +1,18 @@
 "use client";
 
-import { FlowNode, FlowConnection } from "@/lib/types";
+import { FlowNode, FlowConnection, Port } from "@/lib/types";
+import { Size, bestPorts, portPos } from "@/lib/graph";
+import { connId } from "@/lib/ops";
 
 interface Props {
   nodes: FlowNode[];
   connections: FlowConnection[];
-  onContextMenu: (e: React.MouseEvent, index: number) => void;
-  nodeElements: Map<string, DOMRect>;
-}
-
-function getCenter(n: FlowNode, rects: Map<string, DOMRect>) {
-  const r = rects.get(n.id);
-  const w = r ? r.width : 195;
-  const h = r ? r.height : 90;
-  return { x: n.x + w / 2, y: n.y + h / 2 };
-}
-
-function getPortPos(n: FlowNode, port: string, rects: Map<string, DOMRect>) {
-  const r = rects.get(n.id);
-  const w = r ? r.width : 195;
-  const h = r ? r.height : 90;
-  switch (port) {
-    case "top": return { x: n.x + w / 2, y: n.y };
-    case "bottom": return { x: n.x + w / 2, y: n.y + h };
-    case "left": return { x: n.x, y: n.y + h / 2 };
-    case "right": return { x: n.x + w, y: n.y + h / 2 };
-    default: return getCenter(n, rects);
-  }
-}
-
-function bestPorts(a: FlowNode, b: FlowNode, rects: Map<string, DOMRect>) {
-  const ac = getCenter(a, rects);
-  const bc = getCenter(b, rects);
-  const dx = bc.x - ac.x;
-  const dy = bc.y - ac.y;
-  if (Math.abs(dy) > Math.abs(dx)) {
-    return { fp: dy > 0 ? "bottom" : "top", tp: dy > 0 ? "top" : "bottom" };
-  }
-  return { fp: dx > 0 ? "right" : "left", tp: dx > 0 ? "left" : "right" };
+  sizes: Map<string, Size>;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  onContextMenu: (e: React.MouseEvent, id: string) => void;
+  onEditLabel: (id: string) => void;
+  ghost?: { x1: number; y1: number; x2: number; y2: number } | null;
 }
 
 const STROKE: Record<string, string> = {
@@ -46,109 +21,151 @@ const STROKE: Record<string, string> = {
   cno: "stroke-red-500",
   camber: "stroke-amber-500",
 };
-
 const FILL: Record<string, string> = {
   "": "fill-zinc-400 dark:fill-zinc-500",
   cyes: "fill-emerald-500",
   cno: "fill-red-500",
   camber: "fill-amber-500",
 };
-
 const TEXT_FILL: Record<string, string> = {
-  "": "fill-zinc-500",
+  "": "fill-zinc-600 dark:fill-zinc-300",
   cyes: "fill-emerald-600 dark:fill-emerald-400",
   cno: "fill-red-600 dark:fill-red-400",
   camber: "fill-amber-600 dark:fill-amber-400",
 };
 
-export default function Connections({ nodes, connections, onContextMenu, nodeElements }: Props) {
+function pathFor(
+  st: { x: number; y: number },
+  en: { x: number; y: number },
+  fp: Port,
+  tp: Port
+) {
+  const vertical = fp === "top" || fp === "bottom";
+  const tens = Math.min(Math.abs(vertical ? en.y - st.y : en.x - st.x) * 0.5, 110) + 20;
+  let c1: { x: number; y: number };
+  let c2: { x: number; y: number };
+  const off = (p: Port, pt: { x: number; y: number }) => {
+    switch (p) {
+      case "bottom":
+        return { x: pt.x, y: pt.y + tens };
+      case "top":
+        return { x: pt.x, y: pt.y - tens };
+      case "right":
+        return { x: pt.x + tens, y: pt.y };
+      case "left":
+        return { x: pt.x - tens, y: pt.y };
+    }
+  };
+  c1 = off(fp, st);
+  c2 = off(tp, en);
+  return `M${st.x},${st.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${en.x},${en.y}`;
+}
+
+export default function Connections({
+  nodes,
+  connections,
+  sizes,
+  selectedId,
+  onSelect,
+  onContextMenu,
+  onEditLabel,
+  ghost,
+}: Props) {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+
   return (
-    <svg width="6000" height="6000" className="absolute top-0 left-0 pointer-events-none z-[5]">
+    <svg width="12000" height="12000" className="absolute top-0 left-0 pointer-events-none z-[5]">
       <defs>
-        {["", "cyes", "cno", "camber"].map((t) => (
+        {["", "cyes", "cno", "camber", "sel"].map((t) => (
           <marker
             key={t}
             id={`arrow${t ? "-" + t : ""}`}
-            markerWidth="8"
-            markerHeight="8"
+            markerWidth="9"
+            markerHeight="9"
             refX="7"
             refY="4"
             orient="auto"
           >
-            <polygon points="0,0 8,4 0,8" className={FILL[t]} />
+            <polygon points="0,0 8,4 0,8" className={t === "sel" ? "fill-emerald-500" : FILL[t]} />
           </marker>
         ))}
       </defs>
 
-      {connections.map((c, i) => {
-        const fn = nodes.find((n) => n.id === c.from);
-        const tn = nodes.find((n) => n.id === c.to);
+      {connections.map((c) => {
+        const fn = byId.get(c.from);
+        const tn = byId.get(c.to);
         if (!fn || !tn) return null;
 
-        const { fp, tp } = bestPorts(fn, tn, nodeElements);
-        const st = getPortPos(fn, fp, nodeElements);
-        const en = getPortPos(tn, tp, nodeElements);
-        const tens = Math.min(
-          Math.abs(fp === "bottom" || fp === "top" ? en.y - st.y : en.x - st.x) * 0.5,
-          90
-        );
-
-        let c1: { x: number; y: number };
-        let c2: { x: number; y: number };
-
-        if (fp === "bottom" && tp === "top") {
-          c1 = { x: st.x, y: st.y + tens };
-          c2 = { x: en.x, y: en.y - tens };
-        } else if (fp === "right" && tp === "left") {
-          c1 = { x: st.x + tens, y: st.y };
-          c2 = { x: en.x - tens, y: en.y };
-        } else if (fp === "left" && tp === "right") {
-          c1 = { x: st.x - tens, y: st.y };
-          c2 = { x: en.x + tens, y: en.y };
-        } else if (fp === "top" && tp === "bottom") {
-          c1 = { x: st.x, y: st.y - tens };
-          c2 = { x: en.x, y: en.y + tens };
-        } else {
-          c1 = { x: st.x, y: st.y + tens };
-          c2 = { x: en.x, y: en.y - tens };
-        }
-
-        const d = `M${st.x},${st.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${en.x},${en.y}`;
+        const auto = bestPorts(fn, tn, sizes);
+        const fp = c.fromPort || auto.fp;
+        const tp = c.toPort || auto.tp;
+        const st = portPos(fn, fp, sizes);
+        const en = portPos(tn, tp, sizes);
+        const d = pathFor(st, en, fp, tp);
         const mx = (st.x + en.x) / 2;
-        const my = (st.y + en.y) / 2 - 8;
+        const my = (st.y + en.y) / 2;
+        const id = connId(c);
+        const selected = selectedId === id;
 
         return (
-          <g key={i}>
+          <g key={id}>
             <path
               d={d}
-              className={`fill-none ${STROKE[c.type]} transition-[stroke-width]`}
-              strokeWidth={1.5}
-              markerEnd={`url(#arrow${c.type ? "-" + c.type : ""})`}
-              style={{ pointerEvents: "stroke", cursor: "pointer" }}
-              onContextMenu={(e) => onContextMenu(e, i)}
+              className={`fill-none ${selected ? "stroke-emerald-500" : STROKE[c.type]}`}
+              strokeWidth={selected ? 2.5 : 1.5}
+              markerEnd={`url(#arrow${selected ? "-sel" : c.type ? "-" + c.type : ""})`}
+              style={{ pointerEvents: "none" }}
             />
-            {/* Wider invisible hit area */}
+            {/* Wide invisible hit area */}
             <path
               d={d}
               fill="none"
               stroke="transparent"
-              strokeWidth={12}
+              strokeWidth={14}
               style={{ pointerEvents: "stroke", cursor: "pointer" }}
-              onContextMenu={(e) => onContextMenu(e, i)}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                onSelect(id);
+              }}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                onEditLabel(id);
+              }}
+              onContextMenu={(e) => onContextMenu(e, id)}
             />
             {c.label && (
-              <text
-                x={mx}
-                y={my}
-                textAnchor="middle"
-                className={`text-[10px] font-bold ${TEXT_FILL[c.type]} pointer-events-none`}
-              >
-                {c.label}
-              </text>
+              <g style={{ pointerEvents: "none" }}>
+                <rect
+                  x={mx - c.label.length * 3.3 - 5}
+                  y={my - 16}
+                  width={c.label.length * 6.6 + 10}
+                  height={15}
+                  rx={4}
+                  className="fill-white/85 dark:fill-zinc-900/85"
+                />
+                <text
+                  x={mx}
+                  y={my - 5}
+                  textAnchor="middle"
+                  className={`text-[10px] font-bold ${TEXT_FILL[c.type]}`}
+                >
+                  {c.label}
+                </text>
+              </g>
             )}
           </g>
         );
       })}
+
+      {ghost && (
+        <path
+          d={`M${ghost.x1},${ghost.y1} C${ghost.x1},${ghost.y1 + 40} ${ghost.x2},${ghost.y2 - 40} ${ghost.x2},${ghost.y2}`}
+          className="fill-none stroke-emerald-400"
+          strokeWidth={2}
+          strokeDasharray="5 4"
+          markerEnd="url(#arrow-sel)"
+        />
+      )}
     </svg>
   );
 }
