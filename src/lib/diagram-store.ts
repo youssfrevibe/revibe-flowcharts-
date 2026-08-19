@@ -106,18 +106,46 @@ export async function saveToCloud(
 ): Promise<boolean> {
   cacheData(slug, data);
   const known = getCachedDiagrams().find((d) => d.slug === slug);
+  const title = meta?.title || known?.title || slug;
+  const description = meta?.description ?? known?.description ?? "";
+  const color = meta?.color || known?.color || (BUILTIN_SLUGS.has(slug) ? "bg-emerald-700" : "bg-purple-700");
+  const isCustom = meta?.isCustom ?? known?.isCustom ?? !BUILTIN_SLUGS.has(slug);
+
+  if (meta && typeof window !== "undefined") {
+    try {
+      const list = getCachedDiagrams();
+      const nextList = list.map((d) =>
+        d.slug === slug
+          ? { ...d, title, description, color, isCustom, nodeCount: data.nodes.length, updatedAt: new Date().toISOString() }
+          : d
+      );
+      if (!list.some((d) => d.slug === slug)) {
+        nextList.push({
+          slug,
+          title,
+          description,
+          color,
+          isCustom,
+          nodeCount: data.nodes.length,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      localStorage.setItem(LIST_CACHE_KEY, JSON.stringify(nextList));
+    } catch {}
+  }
+
   try {
     const res = await fetch("/api/flowcharts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         slug,
-        title: meta?.title || known?.title || slug,
-        description: meta?.description ?? known?.description ?? "",
+        title,
+        description,
         nodes: data.nodes,
         connections: data.connections,
-        color: meta?.color || known?.color || (BUILTIN_SLUGS.has(slug) ? "bg-emerald-700" : "bg-purple-700"),
-        isCustom: meta?.isCustom ?? known?.isCustom ?? !BUILTIN_SLUGS.has(slug),
+        color,
+        isCustom,
       }),
     });
     return res.ok;
@@ -190,6 +218,51 @@ export async function createCustomDiagram(title: string, description: string): P
   return meta;
 }
 
+/** Soft-delete: hides the diagram from the main list but keeps it recoverable. */
+export async function archiveDiagram(slug: string): Promise<boolean> {
+  if (typeof window !== "undefined") {
+    const list = getCachedDiagrams().filter((d) => d.slug !== slug);
+    try {
+      localStorage.setItem(LIST_CACHE_KEY, JSON.stringify(list));
+    } catch {}
+  }
+  try {
+    const res = await fetch(`/api/flowcharts/${slug}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived: true }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function unarchiveDiagram(slug: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/flowcharts/${slug}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived: false }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchArchivedDiagrams(): Promise<DiagramMetadata[]> {
+  try {
+    const res = await fetch("/api/flowcharts?archived=1", { cache: "no-store" });
+    if (res.ok) {
+      const json = await res.json();
+      return (json.flowcharts || []) as DiagramMetadata[];
+    }
+  } catch {}
+  return [];
+}
+
+/** Permanent delete — used from the archived view. */
 export async function deleteCustomDiagram(slug: string): Promise<void> {
   if (typeof window !== "undefined") {
     localStorage.removeItem(dataCacheKey(slug));
@@ -201,6 +274,34 @@ export async function deleteCustomDiagram(slug: string): Promise<void> {
   try {
     await fetch(`/api/flowcharts/${slug}`, { method: "DELETE" });
   } catch {}
+}
+
+export async function updateDiagramMetadata(
+  slug: string,
+  updates: { title?: string; description?: string; color?: string }
+): Promise<boolean> {
+  const currentList = getCachedDiagrams();
+  const existing = currentList.find((d) => d.slug === slug);
+  const updatedMeta: DiagramMetadata = {
+    slug,
+    title: updates.title ?? existing?.title ?? slug,
+    description: updates.description ?? existing?.description ?? "",
+    nodeCount: existing?.nodeCount ?? 0,
+    color: updates.color ?? existing?.color ?? (BUILTIN_SLUGS.has(slug) ? "bg-emerald-700" : "bg-purple-700"),
+    isCustom: existing?.isCustom ?? !BUILTIN_SLUGS.has(slug),
+    updatedAt: new Date().toISOString(),
+  };
+
+  const nextList = currentList.map((d) => (d.slug === slug ? updatedMeta : d));
+  if (!existing) nextList.push(updatedMeta);
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.setItem(LIST_CACHE_KEY, JSON.stringify(nextList));
+    } catch {}
+  }
+
+  const currentData = getCachedData(slug) || getDefaultData(slug);
+  return saveToCloud(slug, currentData, updatedMeta);
 }
 
 export async function resetToDefault(slug: string): Promise<FlowData> {

@@ -1,25 +1,6 @@
 import { FlowConnection, FlowNode } from "./types";
 import { Size, bestPorts, portPos, computeBounds, sizeOf } from "./graph";
-
-const NODE_FILL: Record<string, string> = {
-  start: "#047857",
-  ok: "#047857",
-  step: "#3f3f46",
-  decision: "#b45309",
-  sub: "#1d4ed8",
-  fail: "#dc2626",
-};
-
-const ACCENT_FILL: Record<string, string> = {
-  emerald: "#047857",
-  blue: "#1d4ed8",
-  amber: "#b45309",
-  rose: "#e11d48",
-  violet: "#6d28d9",
-  cyan: "#0e7490",
-  slate: "#334155",
-  zinc: "#3f3f46",
-};
+import { getNodeFill } from "./node-colors";
 
 const EDGE_STROKE: Record<string, string> = {
   "": "#a1a1aa",
@@ -96,17 +77,19 @@ export function buildDiagramSVG(
       const label = c.label
         ? `<text x="${(st.x + en.x) / 2 + ox}" y="${(st.y + en.y) / 2 + oy - 5}" text-anchor="middle" font-family="sans-serif" font-size="11" font-weight="700" fill="${color}">${esc(c.label)}</text>`
         : "";
-      return `<path d="${d}" fill="none" stroke="${color}" stroke-width="1.5" marker-end="url(#a${c.type || "d"})"/>${label}`;
+      const strokeWidth = c.bold ? "3.5" : "1.5";
+      return `<path d="${d}" fill="none" stroke="${color}" stroke-width="${strokeWidth}" marker-end="url(#a${c.type || "d"})"/>${label}`;
     })
     .join("");
 
-  const SHAPE: Record<string, "process" | "terminator" | "decision" | "subprocess"> = {
+  const SHAPE: Record<string, "process" | "terminator" | "decision" | "subprocess" | "note"> = {
     start: "terminator",
     ok: "terminator",
     fail: "terminator",
     step: "process",
     sub: "subprocess",
     decision: "decision",
+    note: "note",
   };
   const TYPE_LABEL: Record<string, string> = {
     start: "START",
@@ -115,6 +98,7 @@ export function buildDiagramSVG(
     step: "PROCESS STEP",
     sub: "SUB-PROCESS",
     decision: "DECISION",
+    note: "COMMENT",
   };
 
   const nodeSvg = nodes
@@ -124,8 +108,44 @@ export function buildDiagramSVG(
       const y = n.y + oy;
       const cx = x + s.w / 2;
       const cy = y + s.h / 2;
-      const fill = (n.color && ACCENT_FILL[n.color]) || NODE_FILL[n.type] || "#3f3f46";
       const shape = SHAPE[n.type] || "process";
+      const isNote = shape === "note";
+      const fill = getNodeFill(n.color, n.type, isNote);
+
+      // Sticky Comment Note
+      if (isNote) {
+        const labelLines = wrap(n.label || "", Math.floor(s.w / 8), 4);
+        let ty = y + 32;
+        const textSvg = labelLines
+          .map((l) => {
+            const t = `<text x="${x + 12}" y="${ty}" font-family="sans-serif" font-size="12" font-weight="500" fill="#451a03">${esc(l)}</text>`;
+            ty += 16;
+            return t;
+          })
+          .join("");
+        return `<g><rect x="${x}" y="${y}" width="${s.w}" height="${s.h}" rx="10" fill="${fill}" stroke="#fde047" stroke-width="1"/><text x="${x + 12}" y="${y + 16}" font-family="sans-serif" font-size="9" font-weight="700" letter-spacing="0.5" fill="#78350f99">COMMENT</text>${textSvg}</g>`;
+      }
+
+      // External label positioning (Anti-Overlap)
+      const textPos = n.textPosition || "inside";
+      if (textPos !== "inside") {
+        const iconSize = shape === "decision" ? 50 : 36;
+        const bg =
+          shape === "decision"
+            ? `<polygon points="${cx},${cy - iconSize / 2} ${cx + iconSize / 2},${cy} ${cx},${cy + iconSize / 2} ${cx - iconSize / 2},${cy}" fill="${fill}"/>`
+            : `<rect x="${cx - iconSize}" y="${cy - iconSize / 2}" width="${iconSize * 2}" height="${iconSize}" rx="${shape === "terminator" ? iconSize / 2 : 6}" fill="${fill}"/>`;
+
+        const labelLines = wrap(n.label || "", Math.floor(s.w / 8), 2);
+        const detailLines = n.detail ? wrap(n.detail, Math.floor(s.w / 6), 2) : [];
+        const labelSvg = labelLines
+          .map((l, i) => `<text x="${cx}" y="${cy + iconSize / 2 + 16 + i * 14}" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="700" fill="#18181b">${esc(l)}</text>`)
+          .join("");
+        const detailSvg = detailLines
+          .map((l, i) => `<text x="${cx}" y="${cy + iconSize / 2 + 16 + labelLines.length * 14 + i * 12}" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#71717a">${esc(l)}</text>`)
+          .join("");
+
+        return `<g>${bg}${labelSvg}${detailSvg}</g>`;
+      }
 
       // Diamond (decision) and stadium (terminator): centered text.
       if (shape === "decision" || shape === "terminator") {

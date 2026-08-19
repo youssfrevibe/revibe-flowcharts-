@@ -35,6 +35,34 @@ export async function GET(
   }
 }
 
+// PATCH → archive / unarchive (soft delete). Body: { archived: boolean }
+export async function PATCH(
+  req: Request,
+  { params }: { params: Promise<{ slug: string }> }
+) {
+  try {
+    const { slug } = await params;
+    const body = await req.json();
+    const archived = Boolean(body.archived);
+
+    const { error } = await supabaseAdmin
+      .from("flowcharts")
+      .update({ archived })
+      .eq("slug", slug);
+
+    if (error) {
+      // Column likely missing — signal that the migration is needed.
+      if (/archived/i.test(error.message)) {
+        return NextResponse.json({ error: "Archiving not set up yet.", needsMigration: true }, { status: 503 });
+      }
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ success: true });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
+
 export async function DELETE(
   req: Request,
   { params }: { params: Promise<{ slug: string }> }

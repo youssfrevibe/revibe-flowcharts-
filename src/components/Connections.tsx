@@ -76,9 +76,10 @@ export default function Connections({
   return (
     <svg width="12000" height="12000" className="absolute top-0 left-0 pointer-events-none z-[5]">
       <defs>
+        {/* Standard arrow markers */}
         {["", "cyes", "cno", "camber", "sel"].map((t) => (
           <marker
-            key={t}
+            key={`std-${t}`}
             id={`arrow${t ? "-" + t : ""}`}
             markerWidth="9"
             markerHeight="9"
@@ -87,6 +88,21 @@ export default function Connections({
             orient="auto"
           >
             <polygon points="0,0 8,4 0,8" className={t === "sel" ? "fill-emerald-500" : FILL[t]} />
+          </marker>
+        ))}
+
+        {/* Bold pathway arrow markers */}
+        {["", "cyes", "cno", "camber", "sel"].map((t) => (
+          <marker
+            key={`bold-${t}`}
+            id={`arrow-bold${t ? "-" + t : ""}`}
+            markerWidth="11"
+            markerHeight="11"
+            refX="8"
+            refY="4.5"
+            orient="auto"
+          >
+            <polygon points="0,0 9,4.5 0,9" className={t === "sel" ? "fill-emerald-500" : FILL[t]} />
           </marker>
         ))}
       </defs>
@@ -106,22 +122,34 @@ export default function Connections({
         const my = (st.y + en.y) / 2;
         const id = connId(c);
         const selected = selectedId === id;
+        const isBold = Boolean(c.bold);
 
         return (
           <g key={id}>
+            {/* Bold shadow / halo if bold pathway */}
+            {isBold && (
+              <path
+                d={d}
+                className="fill-none stroke-emerald-400/20 dark:stroke-emerald-400/25"
+                strokeWidth={selected ? 8 : 7}
+                style={{ pointerEvents: "none" }}
+              />
+            )}
+
             <path
               d={d}
               className={`fill-none ${selected ? "stroke-emerald-500" : STROKE[c.type]}`}
-              strokeWidth={selected ? 2.5 : 1.5}
-              markerEnd={`url(#arrow${selected ? "-sel" : c.type ? "-" + c.type : ""})`}
+              strokeWidth={selected ? (isBold ? 4.5 : 3) : isBold ? 3.5 : 1.5}
+              markerEnd={`url(#arrow${isBold ? "-bold" : ""}${selected ? "-sel" : c.type ? "-" + c.type : ""})`}
               style={{ pointerEvents: "none" }}
             />
+
             {/* Wide invisible hit area */}
             <path
               d={d}
               fill="none"
               stroke="transparent"
-              strokeWidth={14}
+              strokeWidth={16}
               style={{ pointerEvents: "stroke", cursor: "pointer" }}
               onMouseDown={(e) => {
                 e.stopPropagation();
@@ -133,21 +161,24 @@ export default function Connections({
               }}
               onContextMenu={(e) => onContextMenu(e, id)}
             />
+
             {c.label && (
               <g style={{ pointerEvents: "none" }}>
                 <rect
-                  x={mx - c.label.length * 3.3 - 5}
-                  y={my - 16}
-                  width={c.label.length * 6.6 + 10}
-                  height={15}
-                  rx={4}
-                  className="fill-white/85 dark:fill-zinc-900/85"
+                  x={mx - c.label.length * (isBold ? 3.8 : 3.3) - 7}
+                  y={my - (isBold ? 18 : 16)}
+                  width={c.label.length * (isBold ? 7.6 : 6.6) + 14}
+                  height={isBold ? 18 : 15}
+                  rx={5}
+                  className={`fill-white/95 dark:fill-zinc-900/95 stroke-zinc-200 dark:stroke-zinc-700 ${
+                    isBold ? "stroke-[1.5px]" : "stroke-[0.5px]"
+                  }`}
                 />
                 <text
                   x={mx}
-                  y={my - 5}
+                  y={my - 4.5}
                   textAnchor="middle"
-                  className={`text-[10px] font-bold ${TEXT_FILL[c.type]}`}
+                  className={`${isBold ? "text-[11px] font-extrabold" : "text-[10px] font-bold"} ${TEXT_FILL[c.type]}`}
                 >
                   {c.label}
                 </text>

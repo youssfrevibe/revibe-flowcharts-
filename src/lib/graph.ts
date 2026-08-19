@@ -72,22 +72,24 @@ export function computeBounds(nodes: FlowNode[], sizes: Map<string, Size>): Boun
 }
 
 /**
- * Layered top-down auto-layout (Sugiyama-lite).
- * - Layers nodes by longest-path depth from source nodes.
- * - Orders each layer by the barycenter of already-placed predecessors to reduce edge crossings.
- * - Centers layers horizontally and spaces by measured node sizes.
+ * Layered left-to-right auto-layout (Sugiyama-lite), like a system/architecture diagram.
+ * - Layers nodes by longest-path depth from source nodes → each layer is a COLUMN.
+ * - Orders each column vertically by the barycenter of already-placed predecessors to
+ *   reduce edge crossings.
+ * - Generous, uniform gaps give the diagram "breathing room".
+ * - Columns are centered on a shared vertical axis so the flow reads cleanly across.
  */
 export function autoLayout(
   nodes: FlowNode[],
   connections: FlowConnection[],
   sizes: Map<string, Size>,
-  opts: { xGap?: number; yGap?: number; startX?: number; startY?: number } = {}
+  opts: { xGap?: number; yGap?: number; startX?: number; centerY?: number } = {}
 ): FlowNode[] {
   if (nodes.length === 0) return nodes;
-  const xGap = opts.xGap ?? 60;
-  const yGap = opts.yGap ?? 90;
-  const startX = opts.startX ?? 200;
-  const startY = opts.startY ?? 80;
+  const xGap = opts.xGap ?? 150; // horizontal breathing room between columns
+  const yGap = opts.yGap ?? 48; // vertical gap between nodes stacked in a column
+  const startX = opts.startX ?? 240;
+  const centerY = opts.centerY ?? 1400; // shared vertical axis (kept well inside canvas)
 
   const ids = new Set(nodes.map((n) => n.id));
   const outAdj = new Map<string, string[]>();
@@ -103,13 +105,12 @@ export function autoLayout(
     }
   });
 
-  // Assign layer = longest path from any source. Handle cycles via visited guard.
+  // Assign layer = longest path from any source. Bounded relaxation guards against cycles.
   const layer = new Map<string, number>();
   const roots = nodes.filter((n) => (indeg.get(n.id) || 0) === 0).map((n) => n.id);
   const seeds = roots.length ? roots : [nodes[0].id];
   seeds.forEach((r) => layer.set(r, 0));
 
-  // Relaxation passes (bounded to avoid infinite loops on cycles).
   for (let pass = 0; pass < nodes.length; pass++) {
     let changed = false;
     for (const [from, tos] of outAdj) {
@@ -130,7 +131,7 @@ export function autoLayout(
     if (!layer.has(n.id)) layer.set(n.id, 0);
   });
 
-  // Group by layer.
+  // Group by layer (each layer becomes a column).
   const layers = new Map<number, string[]>();
   nodes.forEach((n) => {
     const l = layer.get(n.id)!;
@@ -142,33 +143,33 @@ export function autoLayout(
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
   const sortedLayers = [...layers.keys()].sort((a, b) => a - b);
 
-  // Order within each layer by barycenter of predecessors' x (falls back to original x).
-  const predX = new Map<string, number>();
-  let y = startY;
+  // Order within each column by barycenter of predecessors' y (falls back to original y).
+  const predY = new Map<string, number>();
+  let x = startX;
   for (const l of sortedLayers) {
-    const layerIds = layers.get(l)!;
-    layerIds.sort((a, b) => {
-      const pa = predX.get(a) ?? nodeById.get(a)!.x;
-      const pb = predX.get(b) ?? nodeById.get(b)!.x;
+    const colIds = layers.get(l)!;
+    colIds.sort((a, b) => {
+      const pa = predY.get(a) ?? nodeById.get(a)!.y;
+      const pb = predY.get(b) ?? nodeById.get(b)!.y;
       return pa - pb;
     });
 
-    const heights = layerIds.map((id) => sizeOf(id, sizes).h);
-    const rowH = Math.max(...heights);
-    const totalW =
-      layerIds.reduce((acc, id) => acc + sizeOf(id, sizes).w, 0) + xGap * (layerIds.length - 1);
-    let x = startX - totalW / 2 + 600; // shift into positive canvas space
-    for (const id of layerIds) {
+    const colW = Math.max(...colIds.map((id) => sizeOf(id, sizes).w));
+    const totalH =
+      colIds.reduce((acc, id) => acc + sizeOf(id, sizes).h, 0) + yGap * (colIds.length - 1);
+    let y = centerY - totalH / 2;
+    for (const id of colIds) {
       const s = sizeOf(id, sizes);
-      posById.set(id, { x, y: y + (rowH - s.h) / 2 });
-      // Seed successors' barycenter with this node's center x.
-      const cx = x + s.w / 2;
+      // Center each node horizontally within its column's width.
+      posById.set(id, { x: x + (colW - s.w) / 2, y });
+      // Seed successors' barycenter with this node's center y.
+      const cy = y + s.h / 2;
       for (const to of outAdj.get(id)!) {
-        predX.set(to, ((predX.get(to) ?? cx) + cx) / 2);
+        predY.set(to, ((predY.get(to) ?? cy) + cy) / 2);
       }
-      x += s.w + xGap;
+      y += s.h + yGap;
     }
-    y += rowH + yGap;
+    x += colW + xGap;
   }
 
   return nodes.map((n) => {

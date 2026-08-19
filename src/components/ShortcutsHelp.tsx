@@ -9,9 +9,10 @@ const GROUPS: { title: string; items: [string, string][] }[] = [
     title: "Tools",
     items: [
       ["V", "Select tool"],
+      ["C", "Add comment / note"],
       ["H / Space", "Pan tool (hold Space to pan)"],
       ["Double-click canvas", "Add a step here"],
-      ["Double-click node", "Edit node"],
+      ["Double-click node", "Edit node / comment"],
       ["Drag node port", "Draw a connection"],
     ],
   },

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import { FlowNode, FlowConnection, FlowData, NodeType, ConnType, Op, Collaborator, Port } from "@/lib/types";
+import { FlowNode, FlowConnection, FlowData, NodeType, ConnType, Op, Collaborator, Port, TextPosition } from "@/lib/types";
 import {
   getDefaultData,
   getCachedData,
@@ -9,12 +9,15 @@ import {
   saveToCloud,
   resetToDefault,
   generateNodeId,
+  updateDiagramMetadata,
 } from "@/lib/diagram-store";
 import { applyOp, connId, newConnId } from "@/lib/ops";
 import { computeBounds, autoLayout, Size } from "@/lib/graph";
 import { buildDiagramSVG } from "@/lib/export-svg";
+import { NODE_COLOR_PRESETS } from "@/lib/node-colors";
 import { getUser } from "@/lib/user";
 import { useRealtimeDoc } from "@/hooks/useRealtimeDoc";
+import { saveVersion } from "@/lib/versions";
 import FlowNodeCard from "./FlowNodeCard";
 import Connections from "./Connections";
 import EditModal from "./EditModal";
@@ -24,19 +27,24 @@ import Minimap from "./Minimap";
 import ShortcutsHelp from "./ShortcutsHelp";
 import PresenceBar from "./PresenceBar";
 import NamePrompt from "./NamePrompt";
+import ThemeToggle from "./ThemeToggle";
+import AIGenerateModal from "./AIGenerateModal";
+import VersionHistory from "./VersionHistory";
 
 interface FlowCanvasProps {
   slug: string;
   title: string;
   subtitle: string;
   exportFilename?: string;
+  /** View-only mode: navigation works, editing is disabled. */
+  readOnly?: boolean;
 }
 
 const GRID = 16;
 const snapVal = (v: number, on: boolean) => (on ? Math.round(v / GRID) * GRID : Math.round(v));
 
 // Collaborative flowchart editor: cloud-synced, live multi-user, full keyboard + editing suite.
-export default function FlowCanvas({ slug, title, subtitle, exportFilename }: FlowCanvasProps) {
+export default function FlowCanvas({ slug, title, subtitle, exportFilename, readOnly = false }: FlowCanvasProps) {
   const [user, setUser] = useState<Collaborator | null>(null);
   const [askName, setAskName] = useState(false);
 
@@ -67,6 +75,9 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
   const [showHandover, setShowHandover] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [showAI, setShowAI] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [ghost, setGhost] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [labelEdit, setLabelEdit] = useState<{ id: string; sx: number; sy: number; value: string } | null>(null);
@@ -84,10 +95,27 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
   const histRef = useRef<{ past: FlowData[]; future: FlowData[] }>({ past: [], future: [] });
   const [, setHistVer] = useState(0);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSnapshotRef = useRef(0);
   const clipboardRef = useRef<{ nodes: FlowNode[]; conns: FlowConnection[] } | null>(null);
   const lastMoveBcast = useRef(0);
   const nudgeTs = useRef(0);
   const fitRef = useRef<() => void>(() => {});
+
+  const [projectTitle, setProjectTitle] = useState(title);
+  const [projectSubtitle, setProjectSubtitle] = useState(subtitle);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [tempTitle, setTempTitle] = useState(title);
+  const [tempSubtitle, setTempSubtitle] = useState(subtitle);
+
+  useEffect(() => {
+    setProjectTitle(title);
+    setTempTitle(title);
+  }, [title]);
+
+  useEffect(() => {
+    setProjectSubtitle(subtitle);
+    setTempSubtitle(subtitle);
+  }, [subtitle]);
 
   /* ------------------------------ identity ----------------------------- */
   useEffect(() => {
@@ -128,14 +156,32 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
     setHistVer((v) => v + 1);
   }, []);
 
+  // Author name for version snapshots (kept in a ref to avoid re-creating callbacks).
+  const userRef = useRef<Collaborator | null>(user);
+  userRef.current = user;
+
+  const snapshotNow = useCallback(
+    (label?: string) => {
+      lastSnapshotRef.current = Date.now();
+      void saveVersion(slug, dataRef.current, { author: userRef.current?.name, label });
+    },
+    [slug]
+  );
+
   const scheduleSave = useCallback(() => {
     setSaveStatus("saving");
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
-      const ok = await saveToCloud(slug, dataRef.current, { title, description: subtitle });
+      const ok = await saveToCloud(slug, dataRef.current, { title: projectTitle, description: projectSubtitle });
       setSaveStatus(ok ? "saved" : "offline");
+      // Auto-snapshot at most once every 3 minutes of active editing.
+      const SNAP_INTERVAL = 180_000;
+      if (Date.now() - lastSnapshotRef.current > SNAP_INTERVAL) {
+        lastSnapshotRef.current = Date.now();
+        void saveVersion(slug, dataRef.current, { author: userRef.current?.name });
+      }
     }, 650);
-  }, [slug, title, subtitle]);
+  }, [slug, projectTitle, projectSubtitle]);
 
   const setTransient = useCallback((producer: (d: FlowData) => FlowData) => {
     const next = producer(dataRef.current);
@@ -145,6 +191,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
 
   const commit = useCallback(
     (producer: (d: FlowData) => FlowData, ops: Op[]) => {
+      if (readOnly) return; // view-only: block all local mutations at the source
       const prev = dataRef.current;
       const next = producer(prev);
       record(prev);
@@ -153,7 +200,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
       scheduleSave();
       bc(ops);
     },
-    [record, scheduleSave, bc]
+    [record, scheduleSave, bc, readOnly]
   );
 
   const select = useCallback((ids: string[]) => {
@@ -280,7 +327,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
         sub: "Sub-process",
         ok: "Success",
         fail: "Failed",
-        note: "Type your comment here...",
+        note: "Write a comment...",
       };
       let pos = at;
       if (!pos) {
@@ -584,7 +631,16 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const r = cw.getBoundingClientRect();
-      zoomAt(e.deltaY > 0 ? 0.9 : 1.1, e.clientX - r.left, e.clientY - r.top);
+      // Normalize delta across mouse wheels (line units) and trackpads (pixel units)
+      // so both feel consistent.
+      let dy = e.deltaY;
+      if (e.deltaMode === 1) dy *= 16; // lines → ~pixels
+      else if (e.deltaMode === 2) dy *= r.height; // pages → ~pixels
+      // Continuous exponential zoom: small trackpad deltas nudge gently, while a
+      // mouse notch still steps a sensible amount. Per-event factor is clamped so a
+      // fast flick can't jump the view.
+      const factor = Math.min(1.22, Math.max(0.82, Math.exp(-dy * 0.0012)));
+      zoomAt(factor, e.clientX - r.left, e.clientY - r.top);
     };
     cw.addEventListener("wheel", onWheel, { passive: false });
     return () => cw.removeEventListener("wheel", onWheel);
@@ -678,6 +734,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
     if (k === "v" && !mod) setTool("select");
     if (k === "h" && !mod) setTool("pan");
     if (k === "g" && !mod) setSnap((s) => !s);
+    if (k === "c" && !mod) addNode("note");
     if ((k === "?" || k === "/") && !mod) {
       setShowHelp((s) => !s);
       return;
@@ -687,7 +744,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
       deleteSelection();
       return;
     }
-    if (k === "enter" && selRef.current.length === 1) {
+    if (k === "enter" && selRef.current.length === 1 && !readOnly) {
       const n = dataRef.current.nodes.find((x) => x.id === selRef.current[0]);
       if (n) setEditNode(n);
       return;
@@ -744,6 +801,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
   };
 
   const onCanvasDoubleClick = (e: React.MouseEvent) => {
+    if (readOnly) return;
     const isBg = e.target === cwRef.current || e.target === canvasRef.current || (e.target as HTMLElement).tagName === "svg";
     if (!isBg) return;
     const w = screenToWorld(e.clientX, e.clientY);
@@ -751,6 +809,11 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
   };
 
   const onNodeMouseDown = (e: React.MouseEvent, node: FlowNode) => {
+    if (readOnly) {
+      // Allow selection for inspection, but no dragging.
+      select(e.shiftKey ? [...new Set([...selRef.current, node.id])] : [node.id]);
+      return;
+    }
     let ids: string[];
     if (e.shiftKey) {
       ids = selRef.current.includes(node.id)
@@ -771,6 +834,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
   };
 
   const onPortMouseDown = (e: React.MouseEvent, node: FlowNode, port: string) => {
+    if (readOnly) return;
     const s = sizes.get(node.id) || { w: 210, h: 84 };
     const pos =
       port === "top"
@@ -803,17 +867,123 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
   );
 
   /* ---------------------------- context menus -------------------------- */
+  const setNodesColor = useCallback(
+    (ids: string[], color?: string) => {
+      const set = new Set(ids);
+      const ops: Op[] = [];
+      commit(
+        (prev) => {
+          const nodes = prev.nodes.map((n) => {
+            if (set.has(n.id)) {
+              const updated = { ...n, color: color || undefined };
+              ops.push({ t: "node.upsert", origin: uid, node: updated });
+              return updated;
+            }
+            return n;
+          });
+          return { ...prev, nodes };
+        },
+        ops
+      );
+    },
+    [commit, uid]
+  );
+
+  const setNodesTextPosition = useCallback(
+    (ids: string[], textPosition: TextPosition) => {
+      const set = new Set(ids);
+      const ops: Op[] = [];
+      commit(
+        (prev) => {
+          const nodes = prev.nodes.map((n) => {
+            if (set.has(n.id)) {
+              const updated = { ...n, textPosition };
+              ops.push({ t: "node.upsert", origin: uid, node: updated });
+              return updated;
+            }
+            return n;
+          });
+          return { ...prev, nodes };
+        },
+        ops
+      );
+    },
+    [commit, uid]
+  );
+
+  const handleSaveTitle = async () => {
+    const t = tempTitle.trim() || "Process Flowchart";
+    const s = tempSubtitle.trim();
+    setProjectTitle(t);
+    setProjectSubtitle(s);
+    setIsEditingTitle(false);
+    if (typeof document !== "undefined") {
+      document.title = `${t} | Process Mapping`;
+    }
+    await updateDiagramMetadata(slug, { title: t, description: s });
+    scheduleSave();
+  };
+
+  const setNodePathwaysBold = useCallback(
+    (nodeIds: string[], bold: boolean) => {
+      const nodeSet = new Set(nodeIds);
+      const updatedConns: FlowConnection[] = [];
+      commit(
+        (prev) => {
+          const connections = prev.connections.map((c) => {
+            if (nodeSet.has(c.from) || nodeSet.has(c.to)) {
+              const updated = { ...c, bold };
+              updatedConns.push(updated);
+              return updated;
+            }
+            return c;
+          });
+          return { ...prev, connections };
+        },
+        updatedConns.map((c) => ({ t: "conn.upsert", origin: uid, conn: c }))
+      );
+    },
+    [commit, uid]
+  );
+
   const nodeContextMenu = (e: React.MouseEvent, node: FlowNode) => {
     e.preventDefault();
     if (!selRef.current.includes(node.id)) select([node.id]);
+    const targetIds = selRef.current.includes(node.id) && selRef.current.length > 1 ? selRef.current : [node.id];
+    const isMultiple = targetIds.length > 1;
+
     setCtxMenu({
       x: e.clientX,
       y: e.clientY,
       items: [
-        { label: "Edit", action: () => setEditNode(node) },
-        { label: "Duplicate", action: () => duplicateNodes(selRef.current.length ? selRef.current : [node.id]) },
-        { separator: true, label: "", action: () => {} },
-        { label: "Delete", action: () => deleteSelection(), danger: true },
+        { label: isMultiple ? `Edit First Node` : "Edit Node Details", action: () => setEditNode(node) },
+        { header: `Quick Color (${targetIds.length} node${targetIds.length > 1 ? "s" : ""})` },
+        {
+          swatches: [
+            { id: "default", fill: "#71717a", name: "Default", onClick: () => setNodesColor(targetIds, "") },
+            ...NODE_COLOR_PRESETS.slice(0, 10).map((c) => ({
+              id: c.id,
+              fill: c.fill,
+              name: c.name,
+              onClick: () => setNodesColor(targetIds, c.id),
+            })),
+          ],
+        },
+        { separator: true },
+        { header: "Text Position" },
+        { label: "Inside Shape", action: () => setNodesTextPosition(targetIds, "inside") },
+        { label: "Top (Above)", action: () => setNodesTextPosition(targetIds, "top") },
+        { label: "Bottom (Below)", action: () => setNodesTextPosition(targetIds, "bottom") },
+        { label: "Left of Shape", action: () => setNodesTextPosition(targetIds, "left") },
+        { label: "Right of Shape", action: () => setNodesTextPosition(targetIds, "right") },
+        { separator: true },
+        { header: "Pathways" },
+        { label: "Bold Connected Pathways", action: () => setNodePathwaysBold(targetIds, true) },
+        { label: "Regular Connected Pathways", action: () => setNodePathwaysBold(targetIds, false) },
+        { separator: true },
+        { label: isMultiple ? `Duplicate (${targetIds.length} Nodes)` : "Duplicate", action: () => duplicateNodes(targetIds) },
+        { separator: true },
+        { label: isMultiple ? `Delete (${targetIds.length} Nodes)` : "Delete", action: () => deleteSelection(), danger: true },
       ],
     });
   };
@@ -822,6 +992,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
     e.preventDefault();
     e.stopPropagation();
     selectConn(id);
+    const conn = dataRef.current.connections.find((c) => connId(c) === id);
+    const isBold = Boolean(conn?.bold);
     const styles: [string, ConnType][] = [
       ["Default", ""],
       ["Yes (green)", "cyes"],
@@ -833,9 +1005,15 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
       y: e.clientY,
       items: [
         { label: "Edit Label", action: () => openLabelEdit(id) },
-        { separator: true, label: "", action: () => {} },
+        { separator: true },
+        {
+          label: isBold ? "✓ Bold Pathway (Thick)" : "Make Pathway Bold (Thick)",
+          action: () => setConnField(id, { bold: !isBold }),
+        },
+        { separator: true },
+        { header: "Pathway Style" },
         ...styles.map(([label, type]) => ({ label: `Style: ${label}`, action: () => setConnField(id, { type }) })),
-        { separator: true, label: "", action: () => {} },
+        { separator: true },
         { label: "Delete Connection", action: () => deleteConn(id), danger: true },
       ],
     });
@@ -913,6 +1091,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
 
   const handleReset = async () => {
     if (!window.confirm("Reset this flowchart to its default template? This affects everyone and cannot be undone.")) return;
+    snapshotNow("Before reset");
     const d = await resetToDefault(slug);
     record(dataRef.current);
     dataRef.current = d;
@@ -920,6 +1099,49 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
     bc({ t: "doc.replace", origin: uid, nodes: d.nodes, connections: d.connections });
     setTimeout(() => fitView(), 60);
   };
+
+  // Apply an AI-generated draft: snapshot first, replace, then auto-arrange left-to-right.
+  const applyGenerated = useCallback(
+    (nodes: FlowNode[], connections: FlowConnection[]) => {
+      snapshotNow("Before AI generation");
+      commit(() => ({ nodes, connections }), [{ t: "doc.replace", origin: uid, nodes, connections }]);
+      // Wait for node sizes to be measured, then arrange and fit.
+      setTimeout(() => {
+        const laid = autoLayout(dataRef.current.nodes, dataRef.current.connections, sizes);
+        commit((prev) => ({ ...prev, nodes: laid }), [
+          { t: "doc.replace", origin: uid, nodes: laid, connections: dataRef.current.connections },
+        ]);
+        setTimeout(() => fitView(), 80);
+      }, 350);
+    },
+    [commit, uid, snapshotNow, sizes, fitView]
+  );
+
+  // Restore a version snapshot into the live document (broadcast to peers).
+  const restoreVersion = useCallback(
+    (restored: FlowData) => {
+      record(dataRef.current);
+      dataRef.current = restored;
+      setData(restored);
+      scheduleSave();
+      bc({ t: "doc.replace", origin: uid, nodes: restored.nodes, connections: restored.connections });
+      setShowHistory(false);
+      setTimeout(() => fitView(), 60);
+    },
+    [record, scheduleSave, bc, uid, fitView]
+  );
+
+  const copyViewLink = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const link = `${window.location.origin}/diagram/${slug}?view=1`;
+    navigator.clipboard?.writeText(link).then(
+      () => {
+        setShareCopied(true);
+        setTimeout(() => setShareCopied(false), 1800);
+      },
+      () => {}
+    );
+  }, [slug]);
 
   /* ------------------------------- render ------------------------------ */
   return (
@@ -935,23 +1157,97 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
             R
           </a>
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-[15px] font-semibold text-zinc-900 dark:text-zinc-100 tracking-tight truncate">
-                {title}
-              </span>
-              <span
-                className={`text-[10px] font-medium px-2 py-0.5 rounded-full shrink-0 ${
-                  saveStatus === "saving"
-                    ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
-                    : saveStatus === "offline"
-                    ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
-                    : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
+            {isEditingTitle ? (
+              <div className="flex items-center gap-2">
+                <div className="flex flex-col gap-1">
+                  <input
+                    autoFocus
+                    type="text"
+                    value={tempTitle}
+                    onChange={(e) => setTempTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSaveTitle();
+                      if (e.key === "Escape") setIsEditingTitle(false);
+                    }}
+                    className="px-2.5 py-1 text-sm font-semibold rounded-lg border border-emerald-500 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 outline-none w-64 shadow-xs"
+                    placeholder="Flowchart Title"
+                  />
+                  <input
+                    type="text"
+                    value={tempSubtitle}
+                    onChange={(e) => setTempSubtitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSaveTitle();
+                      if (e.key === "Escape") setIsEditingTitle(false);
+                    }}
+                    className="px-2.5 py-0.5 text-xs rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300 outline-none w-64 shadow-xs"
+                    placeholder="Description / Subtitle"
+                  />
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={handleSaveTitle}
+                    className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setIsEditingTitle(false)}
+                    className="px-2 py-1.5 text-xs text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div
+                onClick={() => {
+                  if (readOnly) return;
+                  setTempTitle(projectTitle);
+                  setTempSubtitle(projectSubtitle);
+                  setIsEditingTitle(true);
+                }}
+                className={`group/title p-1 -m-1 rounded-lg transition-colors ${
+                  readOnly ? "" : "cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-700/60"
                 }`}
+                title={readOnly ? undefined : "Click to edit flowchart name & description"}
               >
-                {saveStatus === "saving" ? "Saving…" : saveStatus === "offline" ? "Offline" : "Saved"}
-              </span>
-            </div>
-            <div className="text-[11px] text-zinc-400 truncate">{subtitle}</div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[15px] font-semibold font-display text-zinc-900 dark:text-zinc-100 tracking-tight truncate group-hover/title:text-emerald-700 dark:group-hover/title:text-emerald-400 flex items-center gap-1.5 transition-colors">
+                    {projectTitle}
+                    {!readOnly && (
+                      <svg className="w-3.5 h-3.5 opacity-0 group-hover/title:opacity-80 transition-opacity text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                      </svg>
+                    )}
+                  </span>
+                  {readOnly ? (
+                    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full shrink-0 bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300 flex items-center gap-1">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                      View only
+                    </span>
+                  ) : (
+                    <span
+                      className={`text-[10px] font-medium px-2 py-0.5 rounded-full shrink-0 ${
+                        saveStatus === "saving"
+                          ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+                          : saveStatus === "offline"
+                          ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
+                          : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
+                      }`}
+                    >
+                      {saveStatus === "saving" ? "Saving…" : saveStatus === "offline" ? "Offline" : "Saved"}
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] text-zinc-400 truncate">
+                  {projectSubtitle || (!readOnly && <span className="italic opacity-60">Add description...</span>)}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -983,12 +1279,41 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
             </button>
           </div>
 
-          <button
-            onClick={() => setShowHandover(true)}
-            className="px-3 py-1.5 text-xs font-semibold border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 rounded-md transition-colors shadow-xs flex items-center gap-1"
-          >
-            📋 Handover
-          </button>
+          {!readOnly && (
+            <button
+              onClick={() => setShowAI(true)}
+              className="px-3 py-1.5 text-xs font-semibold rounded-md text-white bg-gradient-to-br from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 transition-colors shadow-sm flex items-center gap-1.5"
+              title="Generate a flowchart from a description"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2l1.9 5.1L19 9l-5.1 1.9L12 16l-1.9-5.1L5 9l5.1-1.9L12 2z" />
+              </svg>
+              AI
+            </button>
+          )}
+
+          {!readOnly && (
+            <button
+              onClick={() => setShowHistory(true)}
+              className="px-3 py-1.5 text-xs font-semibold border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 rounded-md transition-colors shadow-xs flex items-center gap-1.5"
+              title="Version history"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path d="M3 3v5h5M3.05 13A9 9 0 1 0 6 5.3L3 8" />
+                <path d="M12 7v5l3 2" />
+              </svg>
+              History
+            </button>
+          )}
+
+          {!readOnly && (
+            <button
+              onClick={() => setShowHandover(true)}
+              className="px-3 py-1.5 text-xs font-semibold border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 rounded-md transition-colors shadow-xs flex items-center gap-1"
+            >
+              📋 Handover
+            </button>
+          )}
 
           {/* Export dropdown */}
           <div className="relative">
@@ -1032,17 +1357,40 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
           <input type="file" ref={fileInputRef} onChange={handleImportJSON} accept=".json" className="hidden" />
 
           <button
+            onClick={copyViewLink}
+            className="px-3 py-1.5 text-xs font-medium border border-zinc-300 dark:border-zinc-600 rounded-md bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors flex items-center gap-1.5"
+            title="Copy a view-only link"
+          >
+            {shareCopied ? (
+              <>
+                <svg className="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5" /></svg>
+                Copied
+              </>
+            ) : (
+              <>
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" /><path d="M16 6l-4-4-4 4" /><path d="M12 2v13" /></svg>
+                Share
+              </>
+            )}
+          </button>
+
+          <button
             onClick={fitView}
             className="px-3 py-1.5 text-xs font-medium border border-zinc-300 dark:border-zinc-600 rounded-md bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors"
           >
             Fit
           </button>
-          <button
-            onClick={handleReset}
-            className="px-3 py-1.5 text-xs font-medium border border-red-200 dark:border-red-900/50 rounded-md bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
-          >
-            Reset
-          </button>
+
+          {!readOnly && (
+            <button
+              onClick={handleReset}
+              className="px-3 py-1.5 text-xs font-medium border border-red-200 dark:border-red-900/50 rounded-md bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
+            >
+              Reset
+            </button>
+          )}
+
+          <ThemeToggle />
         </div>
       </div>
 
@@ -1093,10 +1441,15 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
                 isSelected={selectedIds.includes(node.id)}
                 viewMode={viewMode}
                 onMouseDown={(e) => onNodeMouseDown(e, node)}
-                onDoubleClick={() => setEditNode(node)}
-                onContextMenu={(e) => nodeContextMenu(e, node)}
+                onDoubleClick={() => !readOnly && setEditNode(node)}
+                onContextMenu={(e) => !readOnly && nodeContextMenu(e, node)}
                 onPortMouseDown={(e, port) => onPortMouseDown(e, node, port)}
                 onPortMouseUp={() => {}}
+                onUpdate={saveNode}
+                onDelete={(id) => {
+                  select([id]);
+                  deleteSelection();
+                }}
               />
             ))}
           </div>
@@ -1146,7 +1499,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
       </div>
 
       {/* Bottom toolbar */}
-      <div className="fixed bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-0.5 p-1.5 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl shadow-xl z-50">
+      {!readOnly && (
+      <div className="fixed bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-0.5 p-1.5 bg-white/95 dark:bg-zinc-800/95 backdrop-blur border border-zinc-200 dark:border-zinc-700 rounded-2xl shadow-xl z-50">
         <ToolBtn active={tool === "select"} onClick={() => setTool("select")} title="Select (V)">
           <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" />
         </ToolBtn>
@@ -1174,7 +1528,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
           <circle cx="12" cy="12" r="9" />
           <path d="M15 9l-6 6M9 9l6 6" />
         </ToolBtn>
-        <ToolBtn onClick={() => addNode("note")} title="Add Comment / Note">
+        <ToolBtn onClick={() => addNode("note")} title="Add Comment / Note (C)">
           <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
         </ToolBtn>
         <div className="w-px h-5 bg-zinc-200 dark:bg-zinc-700 mx-1" />
@@ -1197,6 +1551,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
           <path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 2-2.5 2-2.5 4M12 17h.01" />
         </ToolBtn>
       </div>
+      )}
 
       {/* Inline connection label editor */}
       {labelEdit && (
@@ -1229,6 +1584,23 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename }: Fl
             setTimeout(() => fitView(), 100);
           }}
           onClose={() => setShowHandover(false)}
+        />
+      )}
+
+      {showAI && (
+        <AIGenerateModal
+          onClose={() => setShowAI(false)}
+          onGenerated={(nodes, connections) => applyGenerated(nodes, connections)}
+        />
+      )}
+
+      {showHistory && (
+        <VersionHistory
+          slug={slug}
+          authorName={user?.name}
+          getCurrent={() => dataRef.current}
+          onRestore={restoreVersion}
+          onClose={() => setShowHistory(false)}
         />
       )}
 

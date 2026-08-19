@@ -1,5 +1,10 @@
 export type NodeType = "start" | "step" | "decision" | "sub" | "ok" | "fail" | "note";
 
+export type TextPosition = "inside" | "top" | "bottom" | "left" | "right";
+export type TextAlign = "left" | "center" | "right";
+export type TextSize = "sm" | "base" | "lg";
+export type NodeWidth = "compact" | "normal" | "wide" | "xwide";
+
 export interface FlowNode {
   id: string;
   type: NodeType;
@@ -12,8 +17,16 @@ export interface FlowNode {
   sla?: string;
   inputs?: string;
   outputs?: string;
-  /** Optional per-node accent override (e.g. "emerald" | "blue" | "amber" | "rose" | "violet" | "zinc"). */
+  /** Optional per-node accent override (preset name e.g. "emerald", "blue", or hex code "#3b82f6"). */
   color?: string;
+  /** Optional text position to prevent overlapping (default: "inside"). */
+  textPosition?: TextPosition;
+  /** Optional text alignment (default: "center" for decision/terminator, "left" for others). */
+  textAlign?: TextAlign;
+  /** Optional text font size (default: "base"). */
+  textSize?: TextSize;
+  /** Optional node width override or preset. */
+  customWidth?: number | NodeWidth;
 }
 
 export type ConnType = "" | "cyes" | "cno" | "camber";
@@ -28,6 +41,10 @@ export interface FlowConnection {
   /** Optional explicit source/target ports; falls back to auto-routing when absent. */
   fromPort?: Port;
   toPort?: Port;
+  /** Optional bold / highlighted pathway for critical or primary process flow. */
+  bold?: boolean;
+  /** Optional custom connection pathway color override. */
+  color?: string;
 }
 
 export type Port = "top" | "bottom" | "left" | "right";

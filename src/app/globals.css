@@ -1,6 +1,50 @@
 @import "tailwindcss";
 
+/* Manual dark mode via a `.dark` class on <html> (toggle-controlled, with a
+   system-preference fallback applied by the inline script in layout.tsx). */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme inline {
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Inter is the workhorse body font; Poppins is the brand/display font. */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-poppins), var(--font-inter), sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+html {
+  font-family: var(--font-sans);
+}
+
+/* Brand & headings lean on Poppins for a modern, Revibe-consistent look. */
+h1,
+h2,
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+/* Smooth, modern scrollbars that respect the theme. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(161 161 170 / 0.4) transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgb(161 161 170 / 0.35);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(113 113 122 / 0.55);
+  background-clip: content-box;
+}
+
+/* Gentle, consistent focus ring for keyboard users. */
+:focus-visible {
+  outline: 2px solid rgb(16 185 129 / 0.6);
+  outline-offset: 1px;
 }

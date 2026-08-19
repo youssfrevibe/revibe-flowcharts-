@@ -10,6 +10,12 @@ export default function DynamicDiagramPage({ params }: { params: Promise<{ slug:
   // Start undefined so server and client first render match (avoids hydration mismatch);
   // cached/cloud metadata is loaded after mount.
   const [meta, setMeta] = useState<DiagramMetadata | undefined>(undefined);
+  const [readOnly, setReadOnly] = useState(false);
+
+  // Read the view-only flag after mount (keeps SSR/client first render identical).
+  useEffect(() => {
+    setReadOnly(new URLSearchParams(window.location.search).get("view") === "1");
+  }, []);
 
   useEffect(() => {
     const cached = getCachedDiagrams().find((d) => d.slug === slug);
@@ -31,6 +37,7 @@ export default function DynamicDiagramPage({ params }: { params: Promise<{ slug:
       title={meta?.title || "Process Flowchart"}
       subtitle={meta?.description || "Interactive process editor"}
       exportFilename={slug}
+      readOnly={readOnly}
     />
   );
 }
