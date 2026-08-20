@@ -12,7 +12,8 @@ import {
   updateDiagramMetadata,
 } from "@/lib/diagram-store";
 import { applyOp, connId, newConnId } from "@/lib/ops";
-import { computeBounds, autoLayout, Size } from "@/lib/graph";
+import { computeBounds, autoLayout, resolveOverlaps, Size } from "@/lib/graph";
+import { LayoutPrefs, loadLayoutPrefs, saveLayoutPrefs, DEFAULT_PREFS } from "@/lib/layout-prefs";
 import { buildDiagramSVG } from "@/lib/export-svg";
 import { NODE_COLOR_PRESETS } from "@/lib/node-colors";
 import { getUser } from "@/lib/user";
@@ -30,6 +31,7 @@ import NamePrompt from "./NamePrompt";
 import ThemeToggle from "./ThemeToggle";
 import AIGenerateModal from "./AIGenerateModal";
 import VersionHistory from "./VersionHistory";
+import LayoutPanel from "./LayoutPanel";
 
 interface FlowCanvasProps {
   slug: string;
@@ -78,6 +80,10 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const [showAI, setShowAI] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
+  const [showLayoutPanel, setShowLayoutPanel] = useState(false);
+  const [layoutPrefs, setLayoutPrefs] = useState<LayoutPrefs>(DEFAULT_PREFS);
+  const layoutPrefsRef = useRef<LayoutPrefs>(layoutPrefs);
+  layoutPrefsRef.current = layoutPrefs;
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [ghost, setGhost] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [labelEdit, setLabelEdit] = useState<{ id: string; sx: number; sy: number; value: string } | null>(null);
@@ -216,6 +222,19 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     setSelectedConn(id);
     if (id) select([]);
   }, [select]);
+
+  /* ------------------------- layout preferences ------------------------ */
+  useEffect(() => {
+    setLayoutPrefs(loadLayoutPrefs(slug));
+  }, [slug]);
+
+  const updateLayoutPrefs = useCallback(
+    (next: LayoutPrefs) => {
+      setLayoutPrefs(next);
+      saveLayoutPrefs(slug, next);
+    },
+    [slug]
+  );
 
   /* --------------------------- cloud load ------------------------------ */
   useEffect(() => {
@@ -444,9 +463,28 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   }, [commit, select, uid]);
 
   const runAutoLayout = useCallback(() => {
-    const laid = autoLayout(dataRef.current.nodes, dataRef.current.connections, sizes);
-    commit((prev) => ({ ...prev, nodes: laid }), [
-      { t: "doc.replace", origin: uid, nodes: laid, connections: dataRef.current.connections },
+    const laid = autoLayout(dataRef.current.nodes, dataRef.current.connections, sizes, layoutPrefsRef.current);
+    // Drop hand-set ports so each pathway picks the natural side for the NEW layout
+    // (stale fromPort/toPort from the old arrangement cause awkward jogs otherwise).
+    const conns = dataRef.current.connections.map((c) => {
+      if (c.fromPort === undefined && c.toPort === undefined) return c;
+      const { fromPort, toPort, ...rest } = c;
+      void fromPort;
+      void toPort;
+      return rest;
+    });
+    commit(() => ({ nodes: laid, connections: conns }), [
+      { t: "doc.replace", origin: uid, nodes: laid, connections: conns },
+    ]);
+    setTimeout(() => fitView(), 60);
+  }, [commit, sizes, uid, fitView]);
+
+  // Nudge only overlapping nodes apart, preserving the current arrangement.
+  const runFixOverlaps = useCallback(() => {
+    const gap = Math.min(layoutPrefsRef.current.secondaryGap, layoutPrefsRef.current.primaryGap) * 0.5 + layoutPrefsRef.current.margin;
+    const fixed = resolveOverlaps(dataRef.current.nodes, sizes, gap);
+    commit((prev) => ({ ...prev, nodes: fixed }), [
+      { t: "doc.replace", origin: uid, nodes: fixed, connections: dataRef.current.connections },
     ]);
     setTimeout(() => fitView(), 60);
   }, [commit, sizes, uid, fitView]);
@@ -1107,7 +1145,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       commit(() => ({ nodes, connections }), [{ t: "doc.replace", origin: uid, nodes, connections }]);
       // Wait for node sizes to be measured, then arrange and fit.
       setTimeout(() => {
-        const laid = autoLayout(dataRef.current.nodes, dataRef.current.connections, sizes);
+        const laid = autoLayout(dataRef.current.nodes, dataRef.current.connections, sizes, layoutPrefsRef.current);
         commit((prev) => ({ ...prev, nodes: laid }), [
           { t: "doc.replace", origin: uid, nodes: laid, connections: dataRef.current.connections },
         ]);
@@ -1532,7 +1570,34 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
           <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
         </ToolBtn>
         <div className="w-px h-5 bg-zinc-200 dark:bg-zinc-700 mx-1" />
-        <ToolBtn onClick={runAutoLayout} title="Auto-layout (Ctrl+L)">
+        <div className="relative">
+          {showLayoutPanel && (
+            <>
+              <div className="fixed inset-0 z-[490]" onClick={() => setShowLayoutPanel(false)} />
+              <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 z-[500]">
+                <LayoutPanel
+                  prefs={layoutPrefs}
+                  onChange={updateLayoutPrefs}
+                  onOrganize={() => {
+                    runAutoLayout();
+                    setShowLayoutPanel(false);
+                  }}
+                  onFixOverlaps={() => {
+                    runFixOverlaps();
+                    setShowLayoutPanel(false);
+                  }}
+                  onClose={() => setShowLayoutPanel(false)}
+                />
+              </div>
+            </>
+          )}
+          <ToolBtn active={showLayoutPanel} onClick={() => setShowLayoutPanel((s) => !s)} title="Layout & spacing settings">
+            <path d="M4 6h10M4 12h16M4 18h7" />
+            <circle cx="17" cy="6" r="2" fill="currentColor" stroke="none" />
+            <circle cx="14" cy="18" r="2" fill="currentColor" stroke="none" />
+          </ToolBtn>
+        </div>
+        <ToolBtn onClick={runAutoLayout} title="Auto-layout / Organize (Ctrl+L)">
           <path d="M3 3h7v7H3zM14 3h7v4h-7zM14 11h7v10h-7zM3 14h7v7H3z" />
         </ToolBtn>
         <ToolBtn active={snap} onClick={() => setSnap((s) => !s)} title="Snap to grid (G)">

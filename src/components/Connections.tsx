@@ -1,7 +1,7 @@
 "use client";
 
 import { FlowNode, FlowConnection, Port } from "@/lib/types";
-import { Size, bestPorts, portPos } from "@/lib/graph";
+import { Size, bestPorts, sizeOf } from "@/lib/graph";
 import { connId } from "@/lib/ops";
 
 interface Props {
@@ -34,31 +34,246 @@ const TEXT_FILL: Record<string, string> = {
   camber: "fill-amber-600 dark:fill-amber-400",
 };
 
-function pathFor(
-  st: { x: number; y: number },
-  en: { x: number; y: number },
-  fp: Port,
-  tp: Port
-) {
-  const vertical = fp === "top" || fp === "bottom";
-  const tens = Math.min(Math.abs(vertical ? en.y - st.y : en.x - st.x) * 0.5, 110) + 20;
-  let c1: { x: number; y: number };
-  let c2: { x: number; y: number };
-  const off = (p: Port, pt: { x: number; y: number }) => {
-    switch (p) {
-      case "bottom":
-        return { x: pt.x, y: pt.y + tens };
-      case "top":
-        return { x: pt.x, y: pt.y - tens };
-      case "right":
-        return { x: pt.x + tens, y: pt.y };
-      case "left":
-        return { x: pt.x - tens, y: pt.y };
+type Pt = { x: number; y: number };
+type Box = { id: string; x: number; y: number; w: number; h: number };
+
+const STUB = 18; // fixed exit/entry length off a port
+const CORNER = 12; // rounded-corner radius
+const CHANNEL_STEP = 16; // spacing between parallel edge channels
+const PAD = 12; // clearance kept between a pathway and a node it isn't attached to
+const LANE_GAP = 40; // gap below the span before a back-edge's return lane
+const LANE_STEP = 26; // vertical spacing between stacked back-edge lanes
+const isHoriz = (p: Port) => p === "left" || p === "right";
+
+function portPoint(node: FlowNode, side: Port, idx: number, cnt: number, sizes: Map<string, Size>): Pt {
+  const s = sizeOf(node.id, sizes);
+  const frac = (idx + 1) / (cnt + 1);
+  switch (side) {
+    case "right":
+      return { x: node.x + s.w, y: node.y + s.h * frac };
+    case "left":
+      return { x: node.x, y: node.y + s.h * frac };
+    case "top":
+      return { x: node.x + s.w * frac, y: node.y };
+    case "bottom":
+      return { x: node.x + s.w * frac, y: node.y + s.h };
+  }
+}
+
+function stub(pt: Pt, side: Port): Pt {
+  switch (side) {
+    case "right":
+      return { x: pt.x + STUB, y: pt.y };
+    case "left":
+      return { x: pt.x - STUB, y: pt.y };
+    case "top":
+      return { x: pt.x, y: pt.y - STUB };
+    case "bottom":
+      return { x: pt.x, y: pt.y + STUB };
+  }
+}
+
+/** True if an axis-aligned segment passes within `pad` of any box not in `skip`. */
+function segHitsBoxes(a: Pt, b: Pt, boxes: Box[], skip: Set<string>, pad: number): boolean {
+  const minx = Math.min(a.x, b.x) - pad;
+  const maxx = Math.max(a.x, b.x) + pad;
+  const miny = Math.min(a.y, b.y) - pad;
+  const maxy = Math.max(a.y, b.y) + pad;
+  for (const box of boxes) {
+    if (skip.has(box.id)) continue;
+    if (maxx < box.x || minx > box.x + box.w || maxy < box.y || miny > box.y + box.h) continue;
+    return true;
+  }
+  return false;
+}
+
+function polyClear(pts: Pt[], boxes: Box[], skip: Set<string>, pad: number): boolean {
+  for (let i = 1; i < pts.length; i++) {
+    if (segHitsBoxes(pts[i - 1], pts[i], boxes, skip, pad)) return false;
+  }
+  return true;
+}
+
+/** Orthogonal route between two ports that tries to avoid crossing other nodes. */
+function route(st: Pt, en: Pt, fp: Port, tp: Port, stagger: number, boxes: Box[], skip: Set<string>): Pt[] {
+  const s = stub(st, fp);
+  const e = stub(en, tp);
+  const fH = isHoriz(fp);
+  const tH = isHoriz(tp);
+
+  if (fH && tH) {
+    const base = (s.x + e.x) / 2;
+    // Try the staggered midpoint first, then channels near the target/source, then wider offsets.
+    const tries = [base + stagger, base, e.x - 46, s.x + 46, base + 40, base - 40, e.x - 92, s.x + 92, base + 84, base - 84];
+    for (const mx of tries) {
+      const pts = simplify([st, s, { x: mx, y: s.y }, { x: mx, y: e.y }, e, en]);
+      if (polyClear(pts, boxes, skip, PAD)) return pts;
     }
-  };
-  c1 = off(fp, st);
-  c2 = off(tp, en);
-  return `M${st.x},${st.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${en.x},${en.y}`;
+    // Corridor fallback: thread the long run through a clear horizontal lane between rows.
+    const corridor = threadCorridor(st, s, e, en, "h", boxes, skip);
+    if (corridor) return corridor;
+    return simplify([st, s, { x: base + stagger, y: s.y }, { x: base + stagger, y: e.y }, e, en]);
+  }
+
+  if (!fH && !tH) {
+    const base = (s.y + e.y) / 2;
+    const tries = [base + stagger, base, e.y - 46, s.y + 46, base + 40, base - 40];
+    for (const my of tries) {
+      const pts = simplify([st, s, { x: s.x, y: my }, { x: e.x, y: my }, e, en]);
+      if (polyClear(pts, boxes, skip, PAD)) return pts;
+    }
+    const corridor = threadCorridor(st, s, e, en, "v", boxes, skip);
+    if (corridor) return corridor;
+    return simplify([st, s, { x: s.x, y: base + stagger }, { x: e.x, y: base + stagger }, e, en]);
+  }
+
+  // Mixed (one horizontal, one vertical): two L-shaped options; pick the clear one.
+  const optA = simplify([st, s, { x: e.x, y: s.y }, e, en]);
+  const optB = simplify([st, s, { x: s.x, y: e.y }, e, en]);
+  if (polyClear(optA, boxes, skip, PAD)) return optA;
+  if (polyClear(optB, boxes, skip, PAD)) return optB;
+  return optA;
+}
+
+/**
+ * 3-bend route that threads the long run through a clear lane between node rows/columns.
+ * For "h" flow: exit near the source, jump to a clear horizontal lane, cross, drop into the target.
+ * Scans candidate lanes outward from the midpoint and returns the first fully-clear route.
+ */
+function threadCorridor(st: Pt, s: Pt, e: Pt, en: Pt, axis: "h" | "v", boxes: Box[], skip: Set<string>): Pt[] | null {
+  const OFF = 34;
+  // Shift the two turn verticals/horizontals to find a clear lane in packed hubs.
+  const shifts = [0, 40, 80, 140];
+  if (axis === "h") {
+    if (Math.abs(e.x - s.x) < OFF * 2 + 8) return null;
+    const dir = e.x >= s.x ? 1 : -1;
+    const mid = (s.y + e.y) / 2;
+    for (let d = 0; d <= 700; d += 22) {
+      for (const y of d === 0 ? [mid] : [mid + d, mid - d]) {
+        for (const sh of shifts) {
+          const x1 = s.x + dir * (OFF + sh);
+          const x2 = e.x - dir * (OFF + sh);
+          if (dir > 0 ? x1 >= x2 : x1 <= x2) continue;
+          const pts = simplify([st, s, { x: x1, y: s.y }, { x: x1, y }, { x: x2, y }, { x: x2, y: e.y }, e, en]);
+          if (polyClear(pts, boxes, skip, PAD)) return pts;
+        }
+      }
+    }
+    return null;
+  }
+  if (Math.abs(e.y - s.y) < OFF * 2 + 8) return null;
+  const dir = e.y >= s.y ? 1 : -1;
+  const mid = (s.x + e.x) / 2;
+  for (let d = 0; d <= 700; d += 22) {
+    for (const x of d === 0 ? [mid] : [mid + d, mid - d]) {
+      for (const sh of shifts) {
+        const y1 = s.y + dir * (OFF + sh);
+        const y2 = e.y - dir * (OFF + sh);
+        if (dir > 0 ? y1 >= y2 : y1 <= y2) continue;
+        const pts = simplify([st, s, { x: s.x, y: y1 }, { x, y: y1 }, { x, y: y2 }, { x: e.x, y: y2 }, e, en]);
+        if (polyClear(pts, boxes, skip, PAD)) return pts;
+      }
+    }
+  }
+  return null;
+}
+
+/** Loop a back-edge under everything in its span: down, across a clear lane, up into the target. */
+function routeLoopUnder(st: Pt, en: Pt, boxes: Box[], skip: Set<string>, laneIndex: number): Pt[] {
+  const minX = Math.min(st.x, en.x);
+  const maxX = Math.max(st.x, en.x);
+  let maxBottom = Math.max(st.y, en.y);
+  for (const box of boxes) {
+    if (skip.has(box.id)) continue;
+    if (box.x + box.w < minX || box.x > maxX) continue; // only nodes within the horizontal span
+    maxBottom = Math.max(maxBottom, box.y + box.h);
+  }
+  const laneY = maxBottom + LANE_GAP + laneIndex * LANE_STEP;
+  return simplify([st, { x: st.x, y: laneY }, { x: en.x, y: laneY }, en]);
+}
+
+function simplify(raw: Pt[]): Pt[] {
+  const clean: Pt[] = [];
+  for (const p of raw) {
+    const q = clean[clean.length - 1];
+    if (!q || Math.abs(p.x - q.x) > 0.5 || Math.abs(p.y - q.y) > 0.5) clean.push(p);
+  }
+  const out: Pt[] = [];
+  for (let i = 0; i < clean.length; i++) {
+    if (i > 0 && i < clean.length - 1) {
+      const a = clean[i - 1];
+      const b = clean[i];
+      const c = clean[i + 1];
+      const collinear =
+        (Math.abs(a.x - b.x) < 0.5 && Math.abs(b.x - c.x) < 0.5) ||
+        (Math.abs(a.y - b.y) < 0.5 && Math.abs(b.y - c.y) < 0.5);
+      if (collinear) continue;
+    }
+    out.push(clean[i]);
+  }
+  return out;
+}
+
+function roundedPath(pts: Pt[], r: number): string {
+  if (pts.length < 2) return "";
+  if (pts.length === 2) return `M${pts[0].x},${pts[0].y} L${pts[1].x},${pts[1].y}`;
+  let d = `M${pts[0].x},${pts[0].y}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const prev = pts[i - 1];
+    const p = pts[i];
+    const next = pts[i + 1];
+    const d1 = Math.min(r, Math.hypot(prev.x - p.x, prev.y - p.y) / 2);
+    const d2 = Math.min(r, Math.hypot(next.x - p.x, next.y - p.y) / 2);
+    const u1 = unit(p, prev);
+    const u2 = unit(p, next);
+    const a = { x: p.x + u1.x * d1, y: p.y + u1.y * d1 };
+    const b = { x: p.x + u2.x * d2, y: p.y + u2.y * d2 };
+    d += ` L${a.x},${a.y} Q${p.x},${p.y} ${b.x},${b.y}`;
+  }
+  const last = pts[pts.length - 1];
+  d += ` L${last.x},${last.y}`;
+  return d;
+}
+
+function unit(from: Pt, to: Pt): Pt {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return { x: dx / len, y: dy / len };
+}
+
+function midpointOf(pts: Pt[]): Pt {
+  const segs: number[] = [];
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const l = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    segs.push(l);
+    total += l;
+  }
+  let half = total / 2;
+  for (let i = 1; i < pts.length; i++) {
+    const l = segs[i - 1];
+    if (half <= l) {
+      const t = l === 0 ? 0 : half / l;
+      return { x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t };
+    }
+    half -= l;
+  }
+  return pts[Math.floor(pts.length / 2)];
+}
+
+interface Routed {
+  c: FlowConnection;
+  fn: FlowNode;
+  tn: FlowNode;
+  fp: Port;
+  tp: Port;
+  reverse: boolean;
+  fromIdx: number;
+  fromCnt: number;
+  toIdx: number;
+  toCnt: number;
+  laneIndex: number;
 }
 
 export default function Connections({
@@ -72,79 +287,117 @@ export default function Connections({
   ghost,
 }: Props) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
+  const boxes: Box[] = nodes.map((n) => ({ id: n.id, x: n.x, y: n.y, ...sizeOf(n.id, sizes) }));
+  const centerOf = (n: FlowNode) => {
+    const s = sizeOf(n.id, sizes);
+    return { x: n.x + s.w / 2, y: n.y + s.h / 2 };
+  };
+
+  // 1) Resolve ports and detect back-edges (routed under the layout).
+  const routed: Routed[] = [];
+  for (const c of connections) {
+    const fn = byId.get(c.from);
+    const tn = byId.get(c.to);
+    if (!fn || !tn || c.from === c.to) continue;
+    const auto = bestPorts(fn, tn, sizes);
+    let fp = c.fromPort || auto.fp;
+    let tp = c.toPort || auto.tp;
+    const fc = centerOf(fn);
+    const tc = centerOf(tn);
+    // A back-edge flows against the layout direction. Send those under, both ends on the bottom.
+    const horiz = isHoriz(fp) && isHoriz(tp);
+    const vert = !isHoriz(fp) && !isHoriz(tp);
+    const reverse = (horiz && tc.x < fc.x - 8) || (vert && tc.y < fc.y - 8);
+    if (reverse) {
+      fp = "bottom";
+      tp = "bottom";
+    }
+    routed.push({ c, fn, tn, fp, tp, reverse, fromIdx: 0, fromCnt: 1, toIdx: 0, toCnt: 1, laneIndex: 0 });
+  }
+
+  // 2) Fan out edges sharing a node side; order by where the far end sits so they don't cross.
+  const groups = new Map<string, { r: Routed; role: "from" | "to" }[]>();
+  const add = (k: string, v: { r: Routed; role: "from" | "to" }) => {
+    const arr = groups.get(k);
+    if (arr) arr.push(v);
+    else groups.set(k, [v]);
+  };
+  routed.forEach((r) => {
+    add(`${r.c.from}|${r.fp}`, { r, role: "from" });
+    add(`${r.c.to}|${r.tp}`, { r, role: "to" });
+  });
+  const farPerp = (m: { r: Routed; role: "from" | "to" }): number => {
+    const side = m.role === "from" ? m.r.fp : m.r.tp;
+    const far = m.role === "from" ? m.r.tn : m.r.fn;
+    const s = sizeOf(far.id, sizes);
+    return isHoriz(side) ? far.y + s.h / 2 : far.x + s.w / 2;
+  };
+  for (const arr of groups.values()) {
+    arr.sort((a, b) => farPerp(a) - farPerp(b));
+    arr.forEach((m, i) => {
+      if (m.role === "from") {
+        m.r.fromIdx = i;
+        m.r.fromCnt = arr.length;
+      } else {
+        m.r.toIdx = i;
+        m.r.toCnt = arr.length;
+      }
+    });
+  }
+
+  // 3) Assign stacked return-lane indices to back-edges (widest span sits lowest).
+  const backEdges = routed.filter((r) => r.reverse);
+  backEdges.sort((a, b) => {
+    const sa = Math.abs(centerOf(a.fn).x - centerOf(a.tn).x);
+    const sb = Math.abs(centerOf(b.fn).x - centerOf(b.tn).x);
+    return sb - sa;
+  });
+  backEdges.forEach((r, i) => (r.laneIndex = i));
 
   return (
     <svg width="12000" height="12000" className="absolute top-0 left-0 pointer-events-none z-[5]">
       <defs>
-        {/* Standard arrow markers */}
         {["", "cyes", "cno", "camber", "sel"].map((t) => (
-          <marker
-            key={`std-${t}`}
-            id={`arrow${t ? "-" + t : ""}`}
-            markerWidth="9"
-            markerHeight="9"
-            refX="7"
-            refY="4"
-            orient="auto"
-          >
+          <marker key={`std-${t}`} id={`arrow${t ? "-" + t : ""}`} markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
             <polygon points="0,0 8,4 0,8" className={t === "sel" ? "fill-emerald-500" : FILL[t]} />
           </marker>
         ))}
-
-        {/* Bold pathway arrow markers */}
         {["", "cyes", "cno", "camber", "sel"].map((t) => (
-          <marker
-            key={`bold-${t}`}
-            id={`arrow-bold${t ? "-" + t : ""}`}
-            markerWidth="11"
-            markerHeight="11"
-            refX="8"
-            refY="4.5"
-            orient="auto"
-          >
+          <marker key={`bold-${t}`} id={`arrow-bold${t ? "-" + t : ""}`} markerWidth="11" markerHeight="11" refX="8" refY="4.5" orient="auto">
             <polygon points="0,0 9,4.5 0,9" className={t === "sel" ? "fill-emerald-500" : FILL[t]} />
           </marker>
         ))}
       </defs>
 
-      {connections.map((c) => {
-        const fn = byId.get(c.from);
-        const tn = byId.get(c.to);
-        if (!fn || !tn) return null;
-
-        const auto = bestPorts(fn, tn, sizes);
-        const fp = c.fromPort || auto.fp;
-        const tp = c.toPort || auto.tp;
-        const st = portPos(fn, fp, sizes);
-        const en = portPos(tn, tp, sizes);
-        const d = pathFor(st, en, fp, tp);
-        const mx = (st.x + en.x) / 2;
-        const my = (st.y + en.y) / 2;
+      {routed.map((r) => {
+        const { c, fn, tn, fp, tp, fromIdx, fromCnt, toIdx, toCnt, reverse, laneIndex } = r;
+        const st = portPoint(fn, fp, fromIdx, fromCnt, sizes);
+        const en = portPoint(tn, tp, toIdx, toCnt, sizes);
+        const skip = new Set([fn.id, tn.id]);
+        const stagger = (fromIdx - (fromCnt - 1) / 2) * CHANNEL_STEP;
+        const pts = reverse ? routeLoopUnder(st, en, boxes, skip, laneIndex) : route(st, en, fp, tp, stagger, boxes, skip);
+        const d = roundedPath(pts, CORNER);
+        const mid = midpointOf(pts);
         const id = connId(c);
         const selected = selectedId === id;
         const isBold = Boolean(c.bold);
 
         return (
           <g key={id}>
-            {/* Bold shadow / halo if bold pathway */}
             {isBold && (
-              <path
-                d={d}
-                className="fill-none stroke-emerald-400/20 dark:stroke-emerald-400/25"
-                strokeWidth={selected ? 8 : 7}
-                style={{ pointerEvents: "none" }}
-              />
+              <path d={d} className="fill-none stroke-emerald-400/20 dark:stroke-emerald-400/25" strokeWidth={selected ? 8 : 7} strokeLinejoin="round" strokeLinecap="round" style={{ pointerEvents: "none" }} />
             )}
 
             <path
               d={d}
               className={`fill-none ${selected ? "stroke-emerald-500" : STROKE[c.type]}`}
-              strokeWidth={selected ? (isBold ? 4.5 : 3) : isBold ? 3.5 : 1.5}
+              strokeWidth={selected ? (isBold ? 4.5 : 3) : isBold ? 3.5 : 1.75}
+              strokeLinejoin="round"
+              strokeLinecap="round"
               markerEnd={`url(#arrow${isBold ? "-bold" : ""}${selected ? "-sel" : c.type ? "-" + c.type : ""})`}
               style={{ pointerEvents: "none" }}
             />
 
-            {/* Wide invisible hit area */}
             <path
               d={d}
               fill="none"
@@ -165,21 +418,14 @@ export default function Connections({
             {c.label && (
               <g style={{ pointerEvents: "none" }}>
                 <rect
-                  x={mx - c.label.length * (isBold ? 3.8 : 3.3) - 7}
-                  y={my - (isBold ? 18 : 16)}
+                  x={mid.x - c.label.length * (isBold ? 3.8 : 3.3) - 7}
+                  y={mid.y - (isBold ? 18 : 16)}
                   width={c.label.length * (isBold ? 7.6 : 6.6) + 14}
                   height={isBold ? 18 : 15}
                   rx={5}
-                  className={`fill-white/95 dark:fill-zinc-900/95 stroke-zinc-200 dark:stroke-zinc-700 ${
-                    isBold ? "stroke-[1.5px]" : "stroke-[0.5px]"
-                  }`}
+                  className={`fill-white/95 dark:fill-zinc-900/95 stroke-zinc-200 dark:stroke-zinc-700 ${isBold ? "stroke-[1.5px]" : "stroke-[0.5px]"}`}
                 />
-                <text
-                  x={mx}
-                  y={my - 4.5}
-                  textAnchor="middle"
-                  className={`${isBold ? "text-[11px] font-extrabold" : "text-[10px] font-bold"} ${TEXT_FILL[c.type]}`}
-                >
+                <text x={mid.x} y={mid.y - 4.5} textAnchor="middle" className={`${isBold ? "text-[11px] font-extrabold" : "text-[10px] font-bold"} ${TEXT_FILL[c.type]}`}>
                   {c.label}
                 </text>
               </g>
