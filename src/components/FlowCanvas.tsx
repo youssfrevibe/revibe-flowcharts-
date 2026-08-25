@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useLayoutEffect } from "react";
 import { FlowNode, FlowConnection, FlowData, NodeType, ConnType, Op, Collaborator, Port, TextPosition } from "@/lib/types";
 import {
   getDefaultData,
@@ -268,20 +268,87 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   }, [slug]);
 
   /* --------------------------- measurement ----------------------------- */
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => {
-      const next = new Map<string, Size>();
-      const root = canvasRef.current;
-      if (root) {
-        data.nodes.forEach((n) => {
-          const el = root.querySelector(`[data-node-id="${n.id}"]`) as HTMLElement | null;
-          if (el) next.set(n.id, { w: el.offsetWidth, h: el.offsetHeight });
-        });
+  // Keep `sizes` in sync with the actual DOM using a ResizeObserver, so the router never
+  // falls back to DEFAULT_SIZE (210×84) for a node whose real card is wider or taller —
+  // which would otherwise place the port inside the true rectangle and every pathway
+  // from that node would cut through it. `useLayoutEffect` sets the observer up before
+  // paint, and setSizes runs synchronously from the observer callback (no rAF gate) so
+  // Strict Mode's double-effect can't cancel a pending flush.
+  useLayoutEffect(() => {
+    const root = canvasRef.current;
+    if (!root) return;
+    let alive = true;
+    const flush = (batch: Map<string, Size>) => {
+      if (!alive || batch.size === 0) return;
+      setSizes((prev) => {
+        let changed = false;
+        const next = new Map(prev);
+        for (const [id, s] of batch) {
+          const cur = next.get(id);
+          if (!cur || cur.w !== s.w || cur.h !== s.h) {
+            next.set(id, s);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    };
+    const collect = (): Map<string, Size> => {
+      const batch = new Map<string, Size>();
+      root.querySelectorAll<HTMLElement>("[data-node-id]").forEach((el) => {
+        const id = el.dataset.nodeId;
+        if (!id) return;
+        const w = el.offsetWidth;
+        const h = el.offsetHeight;
+        if (w > 0 && h > 0) batch.set(id, { w, h });
+      });
+      return batch;
+    };
+    // Initial measure once the elements are in the DOM.
+    flush(collect());
+    const ro = new ResizeObserver((entries) => {
+      const batch = new Map<string, Size>();
+      for (const e of entries) {
+        const el = e.target as HTMLElement;
+        const id = el.dataset.nodeId;
+        if (!id) continue;
+        const w = el.offsetWidth;
+        const h = el.offsetHeight;
+        if (w > 0 && h > 0) batch.set(id, { w, h });
       }
-      setSizes(next);
+      flush(batch);
     });
-    return () => cancelAnimationFrame(raf);
-  }, [data, viewMode]);
+    const observed = new Set<Element>();
+    const observeAll = () => {
+      root.querySelectorAll("[data-node-id]").forEach((el) => {
+        if (!observed.has(el)) {
+          ro.observe(el);
+          observed.add(el);
+        }
+      });
+      for (const el of observed) {
+        if (!el.isConnected) {
+          ro.unobserve(el);
+          observed.delete(el);
+        }
+      }
+    };
+    observeAll();
+    // A MutationObserver catches newly-mounted node cards so they get observed too, and
+    // re-runs a batch collect so a card that mounts already sized (no ResizeObserver
+    // event) still registers its dimensions.
+    const mo = new MutationObserver(() => {
+      observeAll();
+      flush(collect());
+    });
+    mo.observe(root, { childList: true, subtree: true });
+    return () => {
+      alive = false;
+      ro.disconnect();
+      mo.disconnect();
+      observed.clear();
+    };
+  }, [viewMode]);
 
   /* ----------------------- viewport size tracking ---------------------- */
   useEffect(() => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { FlowNode, FlowConnection, Port } from "@/lib/types";
-import { Size, bestPorts, sizeOf } from "@/lib/graph";
+import { Size, bestPorts, sizeOf, computeBounds } from "@/lib/graph";
 import { connId } from "@/lib/ops";
 
 interface Props {
@@ -104,7 +104,7 @@ function route(st: Pt, en: Pt, fp: Port, tp: Port, stagger: number, boxes: Box[]
   if (fH && tH) {
     const base = (s.x + e.x) / 2;
     // Try the staggered midpoint first, then channels near the target/source, then wider offsets.
-    const tries = [base + stagger, base, e.x - 46, s.x + 46, base + 40, base - 40, e.x - 92, s.x + 92, base + 84, base - 84];
+    const tries = [base + stagger, base, e.x - 46, s.x + 46, base + 40, base - 40, e.x - 92, s.x + 92, base + 84, base - 84, base + 140, base - 140];
     for (const mx of tries) {
       const pts = simplify([st, s, { x: mx, y: s.y }, { x: mx, y: e.y }, e, en]);
       if (polyClear(pts, boxes, skip, PAD)) return pts;
@@ -117,10 +117,25 @@ function route(st: Pt, en: Pt, fp: Port, tp: Port, stagger: number, boxes: Box[]
 
   if (!fH && !tH) {
     const base = (s.y + e.y) / 2;
-    const tries = [base + stagger, base, e.y - 46, s.y + 46, base + 40, base - 40];
+    // Parity with the horizontal case — same set of channel offsets, so tall stacks get the same
+    // rescue attempts as wide ones before falling back to the corridor threader.
+    const tries = [base + stagger, base, e.y - 46, s.y + 46, base + 40, base - 40, e.y - 92, s.y + 92, base + 84, base - 84, base + 140, base - 140];
     for (const my of tries) {
       const pts = simplify([st, s, { x: s.x, y: my }, { x: e.x, y: my }, e, en]);
       if (polyClear(pts, boxes, skip, PAD)) return pts;
+    }
+    // Extra: when source and target sit on the same column (or nearly so), every "channel" above
+    // collapses to a single straight vertical — nothing dodges. Try jogging one leg sideways so
+    // the pathway steps around obstacles between them.
+    if (Math.abs(s.x - e.x) < 40) {
+      const jogs = [60, -60, 90, -90, 130, -130, 180, -180];
+      for (const dx of jogs) {
+        for (const t of [0.35, 0.5, 0.65]) {
+          const my = s.y + (e.y - s.y) * t;
+          const pts = simplify([st, s, { x: s.x, y: my }, { x: s.x + dx, y: my }, { x: e.x + dx, y: my }, { x: e.x, y: my }, e, en]);
+          if (polyClear(pts, boxes, skip, PAD)) return pts;
+        }
+      }
     }
     const corridor = threadCorridor(st, s, e, en, "v", boxes, skip);
     if (corridor) return corridor;
@@ -193,19 +208,25 @@ const SIDES: Port[] = ["right", "left", "top", "bottom"];
 function tryAltPorts(fn: FlowNode, tn: FlowNode, boxes: Box[], skip: Set<string>, sizes: Map<string, Size>): Pt[] | null {
   let best: Pt[] | null = null;
   let bestLen = Infinity;
-  for (const fpx of SIDES) {
-    for (const tpx of SIDES) {
-      const st2 = portPoint(fn, fpx, 0, 1, sizes);
-      const en2 = portPoint(tn, tpx, 0, 1, sizes);
-      const p = route(st2, en2, fpx, tpx, 0, boxes, skip);
-      if (polyClear(p, boxes, skip, PAD)) {
-        const l = pathLen(p);
-        if (l < bestLen) {
-          bestLen = l;
-          best = p;
+  // Two passes: prefer routes with a full PAD clearance, but fall back to a tighter 6px pass
+  // for packed hubs where no port pair clears 12px. Tighter routes still avoid interior
+  // collisions — they just hug edges — which is far better than piercing a node.
+  for (const pad of [PAD, 6]) {
+    for (const fpx of SIDES) {
+      for (const tpx of SIDES) {
+        const st2 = portPoint(fn, fpx, 0, 1, sizes);
+        const en2 = portPoint(tn, tpx, 0, 1, sizes);
+        const p = route(st2, en2, fpx, tpx, 0, boxes, skip);
+        if (polyClear(p, boxes, skip, pad)) {
+          const l = pathLen(p);
+          if (l < bestLen) {
+            bestLen = l;
+            best = p;
+          }
         }
       }
     }
+    if (best) return best;
   }
   return best;
 }
@@ -221,7 +242,30 @@ function routeLoopUnder(st: Pt, en: Pt, boxes: Box[], skip: Set<string>, laneInd
     maxBottom = Math.max(maxBottom, box.y + box.h);
   }
   const laneY = maxBottom + LANE_GAP + laneIndex * LANE_STEP;
-  return simplify([st, { x: st.x, y: laneY }, { x: en.x, y: laneY }, en]);
+  // Base route: straight down, across, straight up.
+  const base = simplify([st, { x: st.x, y: laneY }, { x: en.x, y: laneY }, en]);
+  if (polyClear(base, boxes, skip, PAD)) return base;
+  // A node sits directly below the source or target port — jog each vertical outward until
+  // a clear column is found, then meet the lane. Without this the pathway punches through
+  // whatever obstacle happens to sit under either endpoint.
+  const findClearX = (from: Pt): number => {
+    for (const dx of [0, 24, -24, 48, -48, 80, -80, 120, -120, 180, -180]) {
+      const x = from.x + dx;
+      if (!segHitsBoxes({ x, y: from.y }, { x, y: laneY }, boxes, skip, PAD)) return x;
+    }
+    return from.x;
+  };
+  const sx = findClearX(st);
+  const ex = findClearX(en);
+  const jogged = simplify([
+    st,
+    { x: sx, y: st.y },
+    { x: sx, y: laneY },
+    { x: ex, y: laneY },
+    { x: ex, y: en.y },
+    en,
+  ]);
+  return jogged;
 }
 
 /**
@@ -253,7 +297,7 @@ function routeAStar(st: Pt, en: Pt, fp: Port, tp: Port, boxes: Box[]): Pt[] | nu
   const ys = [...yset].sort((a, b) => a - b);
   const X = xs.length;
   const Y = ys.length;
-  if (X * Y > 26000) return null; // safety cap for very large graphs
+  if (X * Y > 120000) return null; // safety cap for very large graphs
 
   const xIndex = new Map(xs.map((v, i) => [v, i]));
   const yIndex = new Map(ys.map((v, i) => [v, i]));
@@ -527,8 +571,27 @@ export default function Connections({
   });
   backEdges.forEach((r, i) => (r.laneIndex = i));
 
+  // Size the SVG viewport to the actual world extent, plus margin big enough to hold
+  // back-edge return lanes (which drop LANE_GAP + n*LANE_STEP below the lowest node)
+  // and any threading-corridor lanes that swing sideways. A fixed rectangle was clipping
+  // pathways once flows grew past its edges — this scales with the graph, and shifts left
+  // with `viewBox`/CSS offset so negative world coordinates render too.
+  const bounds = computeBounds(nodes, sizes);
+  const backLaneReach = backEdges.length > 0 ? LANE_GAP + backEdges.length * LANE_STEP + 60 : 0;
+  const MARGIN = Math.max(600, backLaneReach, connections.length * 4);
+  const vbX = bounds ? bounds.minX - MARGIN : 0;
+  const vbY = bounds ? bounds.minY - MARGIN : 0;
+  const vbW = bounds ? bounds.w + MARGIN * 2 : 12000;
+  const vbH = bounds ? bounds.h + MARGIN * 2 + backLaneReach : 12000;
+
   return (
-    <svg width="12000" height="12000" className="absolute top-0 left-0 pointer-events-none z-[5]">
+    <svg
+      width={vbW}
+      height={vbH}
+      viewBox={`${vbX} ${vbY} ${vbW} ${vbH}`}
+      className="absolute pointer-events-none z-[5]"
+      style={{ left: vbX, top: vbY }}
+    >
       <defs>
         {["", "cyes", "cno", "camber", "sel"].map((t) => (
           <marker key={`std-${t}`} id={`arrow${t ? "-" + t : ""}`} markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
@@ -549,10 +612,12 @@ export default function Connections({
         const skip = new Set([fn.id, tn.id]);
         const stagger = (fromIdx - (fromCnt - 1) / 2) * CHANNEL_STEP;
         let pts = reverse ? routeLoopUnder(st, en, boxes, skip, laneIndex) : route(st, en, fp, tp, stagger, boxes, skip);
-        // If a forward pathway still crosses a node, try to clear it — first by picking a
-        // better exit/entry side, then by the obstacle-avoiding router. Nothing is applied
-        // unless it's actually clear, so a good edge is never made worse.
-        if (!reverse && !polyClear(pts, boxes, skip, PAD)) {
+        // If the pathway still crosses a node, try to clear it — first by picking a better
+        // exit/entry side, then by the obstacle-avoiding router. Nothing is applied unless
+        // it's actually clear, so a good edge is never made worse. Back-edges get the same
+        // rescue as forward edges: their under-loop can also punch through nodes stacked in
+        // the vertical drop zone.
+        if (!polyClear(pts, boxes, skip, PAD)) {
           const alt = tryAltPorts(fn, tn, boxes, skip, sizes);
           if (alt) {
             pts = alt;
@@ -560,7 +625,10 @@ export default function Connections({
             const astar = routeAStar(st, en, fp, tp, boxes);
             if (astar && polyClear(astar, boxes, skip, 6)) {
               const straight = Math.hypot(en.x - st.x, en.y - st.y) || 1;
-              if (pathLen(astar) <= straight * 2.6) pts = astar;
+              // Give back-edges a looser length budget — a legitimate loop-under can be much
+              // longer than the straight-line distance between its endpoints.
+              const budget = reverse ? 6 : 2.6;
+              if (pathLen(astar) <= straight * budget) pts = astar;
             }
           }
         }
