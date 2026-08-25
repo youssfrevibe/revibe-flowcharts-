@@ -178,6 +178,38 @@ function threadCorridor(st: Pt, s: Pt, e: Pt, en: Pt, axis: "h" | "v", boxes: Bo
   return null;
 }
 
+function pathLen(pts: Pt[]): number {
+  let l = 0;
+  for (let i = 1; i < pts.length; i++) l += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  return l;
+}
+
+/**
+ * When a pathway is forced across a node by a bad exit side, retry every port-side combination
+ * and keep the shortest route that's actually clear. This fixes the common "wrong side" cut
+ * far more reliably than nudging channels. Returns null if no combination clears.
+ */
+const SIDES: Port[] = ["right", "left", "top", "bottom"];
+function tryAltPorts(fn: FlowNode, tn: FlowNode, boxes: Box[], skip: Set<string>, sizes: Map<string, Size>): Pt[] | null {
+  let best: Pt[] | null = null;
+  let bestLen = Infinity;
+  for (const fpx of SIDES) {
+    for (const tpx of SIDES) {
+      const st2 = portPoint(fn, fpx, 0, 1, sizes);
+      const en2 = portPoint(tn, tpx, 0, 1, sizes);
+      const p = route(st2, en2, fpx, tpx, 0, boxes, skip);
+      if (polyClear(p, boxes, skip, PAD)) {
+        const l = pathLen(p);
+        if (l < bestLen) {
+          bestLen = l;
+          best = p;
+        }
+      }
+    }
+  }
+  return best;
+}
+
 /** Loop a back-edge under everything in its span: down, across a clear lane, up into the target. */
 function routeLoopUnder(st: Pt, en: Pt, boxes: Box[], skip: Set<string>, laneIndex: number): Pt[] {
   const minX = Math.min(st.x, en.x);
@@ -190,6 +222,140 @@ function routeLoopUnder(st: Pt, en: Pt, boxes: Box[], skip: Set<string>, laneInd
   }
   const laneY = maxBottom + LANE_GAP + laneIndex * LANE_STEP;
   return simplify([st, { x: st.x, y: laneY }, { x: en.x, y: laneY }, en]);
+}
+
+/**
+ * Obstacle-avoiding orthogonal router (grid A*), used only for pathways the cheap router
+ * can't keep off a node. Builds a sparse "Hanan" grid from node edges + clearance, then
+ * searches shortest bend-penalised path from the source stub to the target stub. Returns
+ * null if no clear route exists (caller falls back to the cheap route — nothing breaks).
+ */
+function routeAStar(st: Pt, en: Pt, fp: Port, tp: Port, boxes: Box[]): Pt[] | null {
+  const CL = 9; // clearance kept from every node (small enough to thread packed hubs)
+  const BEND = 45; // penalty per corner (prefers straighter routes)
+  const s2 = stub(st, fp);
+  const e2 = stub(en, tp);
+  const obs = boxes.map((b) => ({ x: b.x - CL, y: b.y - CL, r: b.x + b.w + CL, bo: b.y + b.h + CL }));
+
+  const xset = new Set<number>();
+  const yset = new Set<number>();
+  for (const o of obs) {
+    xset.add(o.x);
+    xset.add(o.r);
+    yset.add(o.y);
+    yset.add(o.bo);
+  }
+  xset.add(s2.x);
+  xset.add(e2.x);
+  yset.add(s2.y);
+  yset.add(e2.y);
+  const xs = [...xset].sort((a, b) => a - b);
+  const ys = [...yset].sort((a, b) => a - b);
+  const X = xs.length;
+  const Y = ys.length;
+  if (X * Y > 26000) return null; // safety cap for very large graphs
+
+  const xIndex = new Map(xs.map((v, i) => [v, i]));
+  const yIndex = new Map(ys.map((v, i) => [v, i]));
+  const sIx = xIndex.get(s2.x)!;
+  const sIy = yIndex.get(s2.y)!;
+  const gIx = xIndex.get(e2.x)!;
+  const gIy = yIndex.get(e2.y)!;
+
+  const segClear = (ax: number, ay: number, bx: number, by: number): boolean => {
+    const minx = Math.min(ax, bx);
+    const maxx = Math.max(ax, bx);
+    const miny = Math.min(ay, by);
+    const maxy = Math.max(ay, by);
+    for (const o of obs) {
+      if (maxx <= o.x || minx >= o.r || maxy <= o.y || miny >= o.bo) continue;
+      return false;
+    }
+    return true;
+  };
+
+  const H = (ix: number, iy: number) => Math.abs(xs[ix] - e2.x) + Math.abs(ys[iy] - e2.y);
+  const key = (ix: number, iy: number, dir: number) => (iy * X + ix) * 5 + dir;
+  const gScore = new Map<number, number>();
+  const came = new Map<number, { ix: number; iy: number; dir: number }>();
+  const heap = new MinHeap();
+  gScore.set(key(sIx, sIy, 4), 0);
+  heap.push(H(sIx, sIy), { ix: sIx, iy: sIy, dir: 4 });
+  const steps = [
+    [1, 0, 0],
+    [-1, 0, 1],
+    [0, 1, 2],
+    [0, -1, 3],
+  ];
+
+  while (heap.size) {
+    const cur = heap.pop()!.v;
+    const cg = gScore.get(key(cur.ix, cur.iy, cur.dir))!;
+    if (cur.ix === gIx && cur.iy === gIy) {
+      const pts: Pt[] = [];
+      let node: { ix: number; iy: number; dir: number } | undefined = cur;
+      while (node) {
+        pts.push({ x: xs[node.ix], y: ys[node.iy] });
+        node = came.get(key(node.ix, node.iy, node.dir));
+      }
+      pts.reverse();
+      return simplify([st, ...pts, en]);
+    }
+    for (const [ddx, ddy, dir] of steps) {
+      const nix = cur.ix + ddx;
+      const niy = cur.iy + ddy;
+      if (nix < 0 || nix >= X || niy < 0 || niy >= Y) continue;
+      if (!segClear(xs[cur.ix], ys[cur.iy], xs[nix], ys[niy])) continue;
+      const len = Math.abs(xs[nix] - xs[cur.ix]) + Math.abs(ys[niy] - ys[cur.iy]);
+      const bend = cur.dir !== 4 && cur.dir !== dir ? BEND : 0;
+      const ng = cg + len + bend;
+      const nk = key(nix, niy, dir);
+      if (ng < (gScore.get(nk) ?? Infinity)) {
+        gScore.set(nk, ng);
+        came.set(nk, cur);
+        heap.push(ng + H(nix, niy), { ix: nix, iy: niy, dir });
+      }
+    }
+  }
+  return null;
+}
+
+/** Minimal binary min-heap for A*. */
+class MinHeap {
+  private a: { p: number; v: { ix: number; iy: number; dir: number } }[] = [];
+  get size() {
+    return this.a.length;
+  }
+  push(p: number, v: { ix: number; iy: number; dir: number }) {
+    this.a.push({ p, v });
+    let i = this.a.length - 1;
+    while (i > 0) {
+      const par = (i - 1) >> 1;
+      if (this.a[par].p <= this.a[i].p) break;
+      [this.a[par], this.a[i]] = [this.a[i], this.a[par]];
+      i = par;
+    }
+  }
+  pop() {
+    const top = this.a[0];
+    const last = this.a.pop()!;
+    if (this.a.length) {
+      this.a[0] = last;
+      let i = 0;
+      const n = this.a.length;
+      for (;;) {
+        const l = 2 * i + 1;
+        const r = 2 * i + 2;
+        let m = i;
+        if (l < n && this.a[l].p < this.a[m].p) m = l;
+        if (r < n && this.a[r].p < this.a[m].p) m = r;
+        if (m === i) break;
+        [this.a[m], this.a[i]] = [this.a[i], this.a[m]];
+        i = m;
+      }
+    }
+    return top;
+  }
 }
 
 function simplify(raw: Pt[]): Pt[] {
@@ -287,7 +453,14 @@ export default function Connections({
   ghost,
 }: Props) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const boxes: Box[] = nodes.map((n) => ({ id: n.id, x: n.x, y: n.y, ...sizeOf(n.id, sizes) }));
+  // Obstacle footprints for routing. Decision nodes are diamonds — only their centre is solid,
+  // so we inset their box and let pathways use the empty corner triangles (this is where most
+  // "collisions" near decisions actually were: empty space).
+  const boxes: Box[] = nodes.map((n) => {
+    const s = sizeOf(n.id, sizes);
+    const inset = n.type === "decision" ? Math.min(s.w, s.h) * 0.22 : 0;
+    return { id: n.id, x: n.x + inset, y: n.y + inset, w: s.w - inset * 2, h: s.h - inset * 2 };
+  });
   const centerOf = (n: FlowNode) => {
     const s = sizeOf(n.id, sizes);
     return { x: n.x + s.w / 2, y: n.y + s.h / 2 };
@@ -375,7 +548,22 @@ export default function Connections({
         const en = portPoint(tn, tp, toIdx, toCnt, sizes);
         const skip = new Set([fn.id, tn.id]);
         const stagger = (fromIdx - (fromCnt - 1) / 2) * CHANNEL_STEP;
-        const pts = reverse ? routeLoopUnder(st, en, boxes, skip, laneIndex) : route(st, en, fp, tp, stagger, boxes, skip);
+        let pts = reverse ? routeLoopUnder(st, en, boxes, skip, laneIndex) : route(st, en, fp, tp, stagger, boxes, skip);
+        // If a forward pathway still crosses a node, try to clear it — first by picking a
+        // better exit/entry side, then by the obstacle-avoiding router. Nothing is applied
+        // unless it's actually clear, so a good edge is never made worse.
+        if (!reverse && !polyClear(pts, boxes, skip, PAD)) {
+          const alt = tryAltPorts(fn, tn, boxes, skip, sizes);
+          if (alt) {
+            pts = alt;
+          } else {
+            const astar = routeAStar(st, en, fp, tp, boxes);
+            if (astar && polyClear(astar, boxes, skip, 6)) {
+              const straight = Math.hypot(en.x - st.x, en.y - st.y) || 1;
+              if (pathLen(astar) <= straight * 2.6) pts = astar;
+            }
+          }
+        }
         const d = roundedPath(pts, CORNER);
         const mid = midpointOf(pts);
         const id = connId(c);
