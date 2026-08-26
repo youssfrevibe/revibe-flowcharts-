@@ -106,6 +106,34 @@ export default function FlowNodeCard({
     : {};
   const actorTitle = actorStyle ? `${actorStyle.label} — ${actorStyle.desc}` : undefined;
   const stageBadge = node.stage && node.stage.trim().length > 0 ? node.stage.trim() : null;
+  const stageKind = node.stageKind; // "internal" | "external" | undefined — hidden when unset
+
+  // Small chip rendered next to the stage badge, styled to read at a glance without
+  // stealing attention from the label. Internal = amber-ish; external = teal-ish so the
+  // pair reads as complementary. Returns null when the kind is unset — hiding the chip
+  // entirely on nodes that don't classify either way (per the spec).
+  const renderStageKindChip = (variant: "on-dark" | "on-light") => {
+    if (!stageKind) return null;
+    const isExternal = stageKind === "external";
+    if (variant === "on-dark") {
+      const cls = isExternal
+        ? "bg-teal-400/25 text-teal-100 border-teal-300/40"
+        : "bg-amber-400/25 text-amber-100 border-amber-300/40";
+      return (
+        <span className={`inline-flex items-center border rounded px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wide ${cls}`}>
+          {stageKind}
+        </span>
+      );
+    }
+    const cls = isExternal
+      ? "bg-teal-100 text-teal-800 border-teal-200 dark:bg-teal-950/60 dark:text-teal-200 dark:border-teal-800/60"
+      : "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/60 dark:text-amber-200 dark:border-amber-800/60";
+    return (
+      <span className={`inline-flex items-center border rounded px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wide ${cls}`}>
+        {stageKind}
+      </span>
+    );
+  };
 
   // Text layout properties
   const textPos = node.textPosition || "inside";
@@ -190,8 +218,9 @@ export default function FlowNodeCard({
         {node.sla && <span className="text-emerald-600 dark:text-emerald-400 font-mono">· {node.sla}</span>}
       </div>
       {stageBadge && (
-        <div className="mb-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-          Stage · <span className="text-zinc-800 dark:text-zinc-200">{stageBadge}</span>
+        <div className="mb-0.5 flex items-center gap-1.5 flex-wrap text-[9.5px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          <span>Stage · <span className="text-zinc-800 dark:text-zinc-200">{stageBadge}</span></span>
+          {renderStageKindChip("on-light")}
         </div>
       )}
       <div className={`${sizeCls.title} font-bold leading-snug text-zinc-900 dark:text-zinc-100`}>
@@ -274,8 +303,9 @@ export default function FlowNodeCard({
               {node.sla && <span className="ml-1 text-emerald-200">· {node.sla}</span>}
             </div>
             {stageBadge && (
-              <div className="text-[9px] font-semibold uppercase tracking-wide text-white/70 leading-tight">
-                Stage · {stageBadge}
+              <div className="flex items-center gap-1 flex-wrap justify-center text-[9px] font-semibold uppercase tracking-wide text-white/70 leading-tight">
+                <span>Stage · {stageBadge}</span>
+                {renderStageKindChip("on-dark")}
               </div>
             )}
             <div className={`${sizeCls.title} font-bold leading-snug text-white`}>{node.label}</div>
@@ -338,8 +368,9 @@ export default function FlowNodeCard({
             {node.sla && <span className="ml-1 text-emerald-200">SLA {node.sla}</span>}
           </div>
           {stageBadge && (
-            <div className="mt-0.5 text-[9.5px] font-semibold uppercase tracking-wide opacity-80">
-              Stage · {stageBadge}
+            <div className="mt-0.5 flex items-center gap-1.5 flex-wrap text-[9.5px] font-semibold uppercase tracking-wide opacity-80">
+              <span>Stage · {stageBadge}</span>
+              {renderStageKindChip("on-dark")}
             </div>
           )}
           <div className={`${sizeCls.title} font-bold leading-snug mt-0.5`}>{node.label}</div>
@@ -463,10 +494,10 @@ export default function FlowNodeCard({
       <div
         style={{ ...customStyle, ...widthStyle, ...actorOutline }}
         title={actorTitle}
-        className={`relative rounded-[10px] border shadow-sm min-w-[200px] ${
+        className={`relative rounded-xl border shadow-sm min-w-[200px] transition-shadow ${
           isDetailed ? "max-w-[340px]" : "max-w-[280px]"
         } ${colorCls} ${
-          isSelected ? "ring-2 ring-offset-1 ring-emerald-400 ring-offset-transparent shadow-xl" : ""
+          isSelected ? "ring-2 ring-offset-2 ring-emerald-400/70 ring-offset-transparent shadow-lg" : "hover:shadow-md"
         }`}
       >
         {/* Sub-process: double vertical bars */}
@@ -485,11 +516,12 @@ export default function FlowNodeCard({
           )}
         </div>
         {stageBadge && (
-          <div className={`px-3.5 pt-1.5 flex items-center gap-1.5 ${isSub ? "mx-2" : ""}`}>
+          <div className={`px-3.5 pt-1.5 flex items-center gap-1.5 flex-wrap ${isSub ? "mx-2" : ""}`}>
             <span className="text-[8.5px] uppercase tracking-wider font-bold opacity-55">Stage</span>
             <span className="bg-white/15 border border-white/25 rounded px-1.5 py-[1px] text-[9.5px] font-semibold uppercase tracking-wide leading-tight">
               {stageBadge}
             </span>
+            {renderStageKindChip("on-dark")}
           </div>
         )}
         <div className={`px-3.5 pt-2 pb-1 ${sizeCls.title} font-bold leading-snug ${alignCls} ${isSub ? "mx-2" : ""}`}>
@@ -502,22 +534,25 @@ export default function FlowNodeCard({
         )}
 
         {isDetailed && (node.tools?.length || node.agentSteps?.length) ? (
-          <div className="px-3.5 pb-3 pt-2 border-t border-white/20 space-y-2 bg-black/20 rounded-b-[9px]">
+          <div className="px-3.5 pb-3 pt-2 border-t border-white/15 space-y-2 bg-black/25 rounded-b-[11px]">
             {node.tools && node.tools.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {node.tools.map((t, idx) => (
-                  <span key={idx} className="bg-white/20 text-[9px] px-1.5 py-0.5 rounded font-mono font-medium">
-                    🛠️ {t}
+                  <span
+                    key={idx}
+                    className="bg-white/15 border border-white/20 text-[9.5px] px-1.5 py-0.5 rounded-md font-medium tracking-tight"
+                  >
+                    {t}
                   </span>
                 ))}
               </div>
             )}
             {node.agentSteps && node.agentSteps.length > 0 && (
               <div className="space-y-1 pt-1">
-                <div className="text-[9px] font-bold uppercase opacity-70 tracking-wider">Agent Procedure:</div>
-                <ul className="space-y-1">
+                <div className="text-[9px] font-bold uppercase opacity-60 tracking-wider">Procedure</div>
+                <ul className="space-y-0.5">
                   {node.agentSteps.map((step, idx) => (
-                    <li key={idx} className="text-[10px] leading-snug flex items-start gap-1.5 opacity-90">
+                    <li key={idx} className="text-[10.5px] leading-snug flex items-start gap-1.5 opacity-95">
                       <span className="text-emerald-300 font-bold shrink-0">{idx + 1}.</span>
                       <span>{step}</span>
                     </li>

@@ -15,6 +15,13 @@ export type NodeWidth = "compact" | "normal" | "wide" | "xwide";
  */
 export type Actor = "revibe" | "seller" | "system" | "carrier";
 
+/**
+ * Whether a stage is customer-facing ("external") or internal-only. Rendered as a small
+ * pill next to the stage badge. Omit the field entirely to hide the pill on that node —
+ * only nodes that actually classify one way or the other need to set it.
+ */
+export type StageKind = "internal" | "external";
+
 export interface FlowNode {
   id: string;
   type: NodeType;
@@ -41,6 +48,9 @@ export interface FlowNode {
    * above the label as an ALL-CAPS stage badge — meant for the process-tracking value,
    * not extra description. */
   stage?: string;
+  /** Whether the stage is internal-only or customer-facing (external). Rendered as a
+   * small pill next to the stage badge; omit the field entirely to hide the pill. */
+  stageKind?: StageKind;
   /** Who performs this action — controls the card's border color so responsibility is
    * visually scannable across the flow. See [[Actor]]. */
   actor?: Actor;

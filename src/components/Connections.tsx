@@ -109,6 +109,20 @@ function route(st: Pt, en: Pt, fp: Port, tp: Port, stagger: number, boxes: Box[]
       const pts = simplify([st, s, { x: mx, y: s.y }, { x: mx, y: e.y }, e, en]);
       if (polyClear(pts, boxes, skip, PAD)) return pts;
     }
+    // Same-row escape: source and target sit at close y, and every mid-x channel above still
+    // draws the leg from s→(mx, s.y) or (mx, e.y)→e straight through an obstacle sitting at
+    // that y. Detour up or down past the highest/lowest obstacle in the horizontal span, then
+    // come back — the vertical analog of the same-column jog below.
+    if (Math.abs(s.y - e.y) < 40) {
+      const jogs = [60, -60, 90, -90, 130, -130, 180, -180];
+      for (const dy of jogs) {
+        for (const t of [0.35, 0.5, 0.65]) {
+          const mx = s.x + (e.x - s.x) * t;
+          const pts = simplify([st, s, { x: mx, y: s.y }, { x: mx, y: s.y + dy }, { x: mx, y: e.y + dy }, { x: mx, y: e.y }, e, en]);
+          if (polyClear(pts, boxes, skip, PAD)) return pts;
+        }
+      }
+    }
     // Corridor fallback: thread the long run through a clear horizontal lane between rows.
     const corridor = threadCorridor(st, s, e, en, "h", boxes, skip);
     if (corridor) return corridor;
@@ -142,11 +156,30 @@ function route(st: Pt, en: Pt, fp: Port, tp: Port, stagger: number, boxes: Box[]
     return simplify([st, s, { x: s.x, y: base + stagger }, { x: e.x, y: base + stagger }, e, en]);
   }
 
-  // Mixed (one horizontal, one vertical): two L-shaped options; pick the clear one.
+  // Mixed (one horizontal, one vertical): two L-shaped options; pick the clear one. If
+  // neither clears, add a Z-detour on the perpendicular axis before giving up — packed
+  // hubs often need one extra bend to sidestep a node that both L-shapes clip.
   const optA = simplify([st, s, { x: e.x, y: s.y }, e, en]);
   const optB = simplify([st, s, { x: s.x, y: e.y }, e, en]);
   if (polyClear(optA, boxes, skip, PAD)) return optA;
   if (polyClear(optB, boxes, skip, PAD)) return optB;
+  const midX = (s.x + e.x) / 2;
+  const midY = (s.y + e.y) / 2;
+  const zTries = fH
+    ? [
+        [midX, s.y, midX, e.y],
+        [midX + 60, s.y, midX + 60, e.y],
+        [midX - 60, s.y, midX - 60, e.y],
+      ]
+    : [
+        [s.x, midY, e.x, midY],
+        [s.x, midY + 60, e.x, midY + 60],
+        [s.x, midY - 60, e.x, midY - 60],
+      ];
+  for (const [ax, ay, bx, by] of zTries) {
+    const pts = simplify([st, s, { x: ax, y: ay }, { x: bx, y: by }, e, en]);
+    if (polyClear(pts, boxes, skip, PAD)) return pts;
+  }
   return optA;
 }
 

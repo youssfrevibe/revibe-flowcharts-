@@ -1,6 +1,6 @@
 "use client";
 
-import { Actor, FlowNode, NodeType, TextPosition, TextAlign, TextSize, NodeWidth } from "@/lib/types";
+import { Actor, FlowNode, NodeType, TextPosition, TextAlign, TextSize, NodeWidth, StageKind } from "@/lib/types";
 import { NODE_COLOR_PRESETS, NOTE_COLOR_PRESETS, getNodeStyle, getNodeFill, DEFAULT_TYPE_FILL, ACTOR_STYLES, ACTOR_ORDER } from "@/lib/node-colors";
 import React, { useState, useEffect, useRef } from "react";
 
@@ -56,6 +56,7 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
   const [tools, setTools] = useState("");
   const [sla, setSla] = useState("");
   const [stage, setStage] = useState("");
+  const [stageKind, setStageKind] = useState<StageKind | "">("");
   const [actor, setActor] = useState<Actor | "">("");
   const [agentSteps, setAgentSteps] = useState("");
   const [color, setColor] = useState<string>("");
@@ -76,6 +77,7 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
       setTools((node.tools || []).join(", "));
       setSla(node.sla || "");
       setStage(node.stage || "");
+      setStageKind(node.stageKind || "");
       setActor(node.actor || "");
       setAgentSteps((node.agentSteps || []).join("\n"));
       setColor(node.color || "");
@@ -139,6 +141,7 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
       tools: parsedTools,
       sla: sla.trim(),
       stage: stage.trim() || undefined,
+      stageKind: stageKind || undefined,
       actor: actor || undefined,
       agentSteps: parsedSteps,
       color: color || undefined,
@@ -277,20 +280,88 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
                 </div>
               </div>
 
-              {/* Stage (business status shown on the card) */}
-              <div>
-                <label className="block text-[10.5px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-1.5">
-                  Stage
-                  <span className="ml-1.5 text-[9.5px] normal-case font-medium text-zinc-400">
-                    Business status shown as a badge on the card (e.g. “Under QC”, “Ready for refund”).
-                  </span>
-                </label>
-                <input
-                  value={stage}
-                  onChange={(e) => setStage(e.target.value)}
-                  placeholder="e.g. Under QC"
-                  className="w-full px-3.5 py-2 rounded-lg border border-zinc-300 dark:border-zinc-600 bg-zinc-50 dark:bg-zinc-900 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
+              {/* Stage (business status shown on the card) + Kind picker */}
+              <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-900/70 border border-zinc-200 dark:border-zinc-700/80 space-y-2.5">
+                <div>
+                  <label className="block text-[10.5px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-1.5">
+                    Stage
+                    <span className="ml-1.5 text-[9.5px] normal-case font-medium text-zinc-400">
+                      Business status shown as a badge on the card.
+                    </span>
+                  </label>
+                  <input
+                    value={stage}
+                    onChange={(e) => setStage(e.target.value)}
+                    placeholder="e.g. Under QC"
+                    className="w-full px-3.5 py-2 rounded-lg border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-900 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+
+                {/* Stage kind — internal / external / (unset). Kept as an unset default
+                    so the card hides the chip on nodes that don't classify either way. */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-[10.5px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                      Stage visibility
+                    </label>
+                    {stageKind && (
+                      <button
+                        type="button"
+                        onClick={() => setStageKind("")}
+                        className="text-[10px] text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 underline"
+                      >
+                        Hide chip
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {[
+                      {
+                        v: "internal" as StageKind,
+                        label: "Internal",
+                        desc: "Team-only stage — not shown to the customer",
+                        dot: "#f59e0b",
+                        selRing: "#f59e0b",
+                      },
+                      {
+                        v: "external" as StageKind,
+                        label: "External",
+                        desc: "Customer-facing stage — visible to the customer",
+                        dot: "#14b8a6",
+                        selRing: "#14b8a6",
+                      },
+                    ].map((opt) => {
+                      const selected = stageKind === opt.v;
+                      return (
+                        <button
+                          key={opt.v}
+                          type="button"
+                          onClick={() => setStageKind(opt.v)}
+                          title={opt.desc}
+                          className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border text-left transition-all ${
+                            selected
+                              ? "border-transparent bg-white dark:bg-zinc-800 shadow-sm"
+                              : "border-zinc-200 dark:border-zinc-700 hover:bg-white/60 dark:hover:bg-zinc-800/60"
+                          }`}
+                          style={selected ? { boxShadow: `0 0 0 2px ${opt.selRing}` } : {}}
+                        >
+                          <span
+                            className="inline-block w-3 h-3 rounded-full shrink-0"
+                            style={{ backgroundColor: opt.dot }}
+                          />
+                          <span className="flex flex-col leading-tight min-w-0">
+                            <span className="text-[11.5px] font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                              {opt.label}
+                            </span>
+                            <span className="text-[9.5px] text-zinc-500 dark:text-zinc-400 truncate">
+                              {opt.desc}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
 
               {/* Actor — controls the card's outline colour so a reader can scan the

@@ -68,7 +68,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
 
   const [tool, setTool] = useState<"select" | "pan">("select");
   const [snap, setSnap] = useState(false);
-  const [viewMode, setViewMode] = useState<"standard" | "detailed">("standard");
+  const [viewMode, setViewMode] = useState<"standard" | "detailed">("detailed");
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "offline">("saved");
 
   const [sizes, setSizes] = useState<Map<string, Size>>(new Map());
