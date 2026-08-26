@@ -1,5 +1,5 @@
 import React from "react";
-import { NodeType } from "./types";
+import { Actor, NodeType } from "./types";
 
 export interface ColorPreset {
   id: string;
@@ -36,6 +36,61 @@ export const NOTE_COLOR_PRESETS: ColorPreset[] = [
   { id: "violet", name: "Purple", fill: "#e9d5ff", border: "#d8b4fe", bgClass: "bg-purple-100 dark:bg-purple-950/80 border-purple-300 dark:border-purple-700/70 text-purple-950 dark:text-purple-100", isLight: true },
   { id: "zinc", name: "Gray", fill: "#e4e4e7", border: "#d4d4d8", bgClass: "bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100", isLight: true },
 ];
+
+/**
+ * "Who does this action" palette — rendered as the card's outline so a reader can scan the
+ * flow and see responsibilities at a glance. Each entry drives an outline colour and a
+ * matching pill for the legend/actor picker. Kept vivid so it reads over any node fill.
+ */
+export interface ActorStyle {
+  id: Actor;
+  label: string;
+  /** Description of who this covers. */
+  desc: string;
+  /** Outer outline (ring) hex — the thing the reader actually sees on the flow. */
+  ring: string;
+  /** Small pill background / dot used in the editor and menus. */
+  pill: string;
+  /** Text colour paired with `pill`. */
+  pillText: string;
+}
+
+export const ACTOR_STYLES: Record<Actor, ActorStyle> = {
+  revibe: {
+    id: "revibe",
+    label: "Revibe team",
+    desc: "Revibe agent, delegate, or team member does this step",
+    ring: "#a855f7", // purple-500
+    pill: "#f3e8ff",
+    pillText: "#6b21a8",
+  },
+  seller: {
+    id: "seller",
+    label: "Seller",
+    desc: "Seller / supplier does this step",
+    ring: "#f97316", // orange-500
+    pill: "#ffedd5",
+    pillText: "#9a3412",
+  },
+  system: {
+    id: "system",
+    label: "System (automatic)",
+    desc: "Automated — done by the system with no human action",
+    ring: "#9ca3af", // gray-400
+    pill: "#e5e7eb",
+    pillText: "#374151",
+  },
+  carrier: {
+    id: "carrier",
+    label: "Third party / carrier",
+    desc: "Carrier, courier, lab, or another external third party",
+    ring: "#06b6d4", // cyan-500
+    pill: "#cffafe",
+    pillText: "#155e75",
+  },
+};
+
+export const ACTOR_ORDER: Actor[] = ["revibe", "seller", "system", "carrier"];
 
 export const DEFAULT_TYPE_FILL: Record<NodeType, string> = {
   start: "#047857",

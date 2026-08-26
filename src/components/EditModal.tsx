@@ -1,7 +1,7 @@
 "use client";
 
-import { FlowNode, NodeType, TextPosition, TextAlign, TextSize, NodeWidth } from "@/lib/types";
-import { NODE_COLOR_PRESETS, NOTE_COLOR_PRESETS, getNodeStyle, getNodeFill, DEFAULT_TYPE_FILL } from "@/lib/node-colors";
+import { Actor, FlowNode, NodeType, TextPosition, TextAlign, TextSize, NodeWidth } from "@/lib/types";
+import { NODE_COLOR_PRESETS, NOTE_COLOR_PRESETS, getNodeStyle, getNodeFill, DEFAULT_TYPE_FILL, ACTOR_STYLES, ACTOR_ORDER } from "@/lib/node-colors";
 import React, { useState, useEffect, useRef } from "react";
 
 const NODE_TYPES: { value: NodeType; label: string }[] = [
@@ -55,6 +55,8 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
   const [detail, setDetail] = useState("");
   const [tools, setTools] = useState("");
   const [sla, setSla] = useState("");
+  const [stage, setStage] = useState("");
+  const [actor, setActor] = useState<Actor | "">("");
   const [agentSteps, setAgentSteps] = useState("");
   const [color, setColor] = useState<string>("");
   const [customHex, setCustomHex] = useState<string>("#3b82f6");
@@ -73,6 +75,8 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
       setDetail(node.detail || "");
       setTools((node.tools || []).join(", "));
       setSla(node.sla || "");
+      setStage(node.stage || "");
+      setActor(node.actor || "");
       setAgentSteps((node.agentSteps || []).join("\n"));
       setColor(node.color || "");
       if (node.color && node.color.startsWith("#")) {
@@ -134,6 +138,8 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
       detail,
       tools: parsedTools,
       sla: sla.trim(),
+      stage: stage.trim() || undefined,
+      actor: actor || undefined,
       agentSteps: parsedSteps,
       color: color || undefined,
       textPosition,
@@ -268,6 +274,74 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
                     placeholder="e.g. 24 hours, 10 min"
                     className="w-full px-3.5 py-2 rounded-lg border border-zinc-300 dark:border-zinc-600 bg-zinc-50 dark:bg-zinc-900 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
+                </div>
+              </div>
+
+              {/* Stage (business status shown on the card) */}
+              <div>
+                <label className="block text-[10.5px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-1.5">
+                  Stage
+                  <span className="ml-1.5 text-[9.5px] normal-case font-medium text-zinc-400">
+                    Business status shown as a badge on the card (e.g. “Under QC”, “Ready for refund”).
+                  </span>
+                </label>
+                <input
+                  value={stage}
+                  onChange={(e) => setStage(e.target.value)}
+                  placeholder="e.g. Under QC"
+                  className="w-full px-3.5 py-2 rounded-lg border border-zinc-300 dark:border-zinc-600 bg-zinc-50 dark:bg-zinc-900 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              {/* Actor — controls the card's outline colour so a reader can scan the
+                  flow and instantly see who owns each step. */}
+              <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-900/70 border border-zinc-200 dark:border-zinc-700/80 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[10.5px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    Who does this? (outline colour)
+                  </label>
+                  {actor && (
+                    <button
+                      type="button"
+                      onClick={() => setActor("")}
+                      className="text-[10px] text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 underline"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {ACTOR_ORDER.map((a) => {
+                    const s = ACTOR_STYLES[a];
+                    const selected = actor === a;
+                    return (
+                      <button
+                        key={a}
+                        type="button"
+                        onClick={() => setActor(a)}
+                        title={s.desc}
+                        className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border text-left transition-all ${
+                          selected
+                            ? "border-transparent bg-white dark:bg-zinc-800 shadow-sm ring-2"
+                            : "border-zinc-200 dark:border-zinc-700 hover:bg-white/60 dark:hover:bg-zinc-800/60"
+                        }`}
+                        style={selected ? { boxShadow: `0 0 0 2px ${s.ring}` } : {}}
+                      >
+                        <span
+                          className="inline-block w-3.5 h-3.5 rounded-full shrink-0"
+                          style={{ backgroundColor: s.ring, boxShadow: `0 0 0 2px ${s.ring}30` }}
+                        />
+                        <span className="flex flex-col leading-tight min-w-0">
+                          <span className="text-[11.5px] font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+                            {s.label}
+                          </span>
+                          <span className="text-[9.5px] text-zinc-500 dark:text-zinc-400 truncate">
+                            {s.desc}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 

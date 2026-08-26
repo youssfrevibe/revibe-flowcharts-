@@ -5,6 +5,16 @@ export type TextAlign = "left" | "center" | "right";
 export type TextSize = "sm" | "base" | "lg";
 export type NodeWidth = "compact" | "normal" | "wide" | "xwide";
 
+/**
+ * Who owns / performs the action at this step. Rendered as the card's border color so a
+ * reader can scan the flow and see "who does what" at a glance.
+ *   revibe  → Revibe team    (purple)
+ *   seller  → Seller / supplier (orange)
+ *   system  → Automated / system-driven (grey)
+ *   carrier → Third party / carrier / lab (cyan)
+ */
+export type Actor = "revibe" | "seller" | "system" | "carrier";
+
 export interface FlowNode {
   id: string;
   type: NodeType;
@@ -27,6 +37,13 @@ export interface FlowNode {
   textSize?: TextSize;
   /** Optional node width override or preset. */
   customWidth?: number | NodeWidth;
+  /** Business stage this card belongs to (e.g. "Under QC", "Ready for refund"). Rendered
+   * above the label as an ALL-CAPS stage badge — meant for the process-tracking value,
+   * not extra description. */
+  stage?: string;
+  /** Who performs this action — controls the card's border color so responsibility is
+   * visually scannable across the flow. See [[Actor]]. */
+  actor?: Actor;
 }
 
 export type ConnType = "" | "cyes" | "cno" | "camber";

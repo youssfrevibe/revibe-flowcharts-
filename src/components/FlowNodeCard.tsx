@@ -1,7 +1,7 @@
 "use client";
 
 import { FlowNode, NodeType } from "@/lib/types";
-import { getNodeStyle, getNodeFill, ColorPreset, NODE_COLOR_PRESETS, NOTE_COLOR_PRESETS } from "@/lib/node-colors";
+import { getNodeStyle, getNodeFill, ColorPreset, NODE_COLOR_PRESETS, NOTE_COLOR_PRESETS, ACTOR_STYLES } from "@/lib/node-colors";
 import React, { useRef, useCallback, useState, useEffect } from "react";
 
 export const TYPE_LABELS: Record<NodeType, string> = {
@@ -95,6 +95,18 @@ export default function FlowNodeCard({
   const isNote = shape === "note";
   const { className: colorCls, customStyle, fill, textColor } = getNodeStyle(node.color, node.type, isNote);
 
+  // Actor outline — paints the card's outer ring so a reader can spot "who does this"
+  // without opening any panel. Uses CSS `outline` so the ring lives OUTSIDE the box and
+  // doesn't change the measured card dimensions — critical because the pathway router
+  // reads offsetWidth/Height to place ports, and any width shift here would misalign
+  // every edge attached to this node. Notes stay uncolored.
+  const actorStyle = node.actor && !isNote ? ACTOR_STYLES[node.actor] : undefined;
+  const actorOutline: React.CSSProperties = actorStyle
+    ? { outline: `3px solid ${actorStyle.ring}`, outlineOffset: 2 }
+    : {};
+  const actorTitle = actorStyle ? `${actorStyle.label} — ${actorStyle.desc}` : undefined;
+  const stageBadge = node.stage && node.stage.trim().length > 0 ? node.stage.trim() : null;
+
   // Text layout properties
   const textPos = node.textPosition || "inside";
   const isTextOutside = textPos !== "inside" && !isNote;
@@ -177,6 +189,11 @@ export default function FlowNodeCard({
         <span>{TYPE_LABELS[node.type]}</span>
         {node.sla && <span className="text-emerald-600 dark:text-emerald-400 font-mono">· {node.sla}</span>}
       </div>
+      {stageBadge && (
+        <div className="mb-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          Stage · <span className="text-zinc-800 dark:text-zinc-200">{stageBadge}</span>
+        </div>
+      )}
       <div className={`${sizeCls.title} font-bold leading-snug text-zinc-900 dark:text-zinc-100`}>
         {node.label}
       </div>
@@ -204,9 +221,12 @@ export default function FlowNodeCard({
       return (
         <div {...wrapperProps}>
           <div className={`flex ${flexDir} gap-2.5 items-center`}>
-            <div className="relative shrink-0" style={{ width: diamondSize, height: diamondSize }}>
+            <div className="relative shrink-0" style={{ width: diamondSize, height: diamondSize }} title={actorTitle}>
               {isSelected && (
                 <div className="absolute -inset-1 bg-emerald-400" style={{ clipPath: DIAMOND }} />
+              )}
+              {actorStyle && !isSelected && (
+                <div className="absolute -inset-1" style={{ clipPath: DIAMOND, backgroundColor: actorStyle.ring }} />
               )}
               <div
                 className="absolute inset-0 shadow-sm"
@@ -228,11 +248,20 @@ export default function FlowNodeCard({
 
     return (
       <div {...wrapperProps}>
-        <div className="relative" style={{ width: w, height: h }}>
+        <div className="relative" style={{ width: w, height: h }} title={actorTitle}>
           {isSelected && (
             <div
               className="absolute -inset-1 bg-emerald-400"
               style={{ clipPath: DIAMOND }}
+            />
+          )}
+          {/* Actor outline as a diamond-shaped underlay slightly larger than the shape —
+             CSS `outline` can't follow a clip-path, so we paint the ring behind the fill
+             using the same diamond clip. Inset by -4px so it shows around all four sides. */}
+          {actorStyle && !isSelected && (
+            <div
+              className="absolute -inset-1"
+              style={{ clipPath: DIAMOND, backgroundColor: actorStyle.ring }}
             />
           )}
           <div
@@ -244,6 +273,11 @@ export default function FlowNodeCard({
               Decision
               {node.sla && <span className="ml-1 text-emerald-200">· {node.sla}</span>}
             </div>
+            {stageBadge && (
+              <div className="text-[9px] font-semibold uppercase tracking-wide text-white/70 leading-tight">
+                Stage · {stageBadge}
+              </div>
+            )}
             <div className={`${sizeCls.title} font-bold leading-snug text-white`}>{node.label}</div>
             {node.detail && (
               <div className={`${sizeCls.detail} leading-tight text-white/75 mt-1 line-clamp-2`}>
@@ -274,7 +308,8 @@ export default function FlowNodeCard({
           <div className={`flex ${flexDir} gap-2.5 items-center`}>
             <div className="relative shrink-0">
               <div
-                style={{ ...customStyle }}
+                style={{ ...customStyle, ...actorOutline, borderRadius: 9999 }}
+                title={actorTitle}
                 className={`rounded-full border shadow-sm px-5 py-2 flex items-center justify-center font-bold text-xs ${colorCls} ${
                   isSelected ? "ring-2 ring-offset-1 ring-emerald-400 ring-offset-transparent shadow-xl" : ""
                 }`}
@@ -292,7 +327,8 @@ export default function FlowNodeCard({
     return (
       <div {...wrapperProps}>
         <div
-          style={{ ...customStyle, ...widthStyle }}
+          style={{ ...customStyle, ...widthStyle, ...actorOutline, borderRadius: 9999 }}
+          title={actorTitle}
           className={`rounded-full border shadow-sm min-w-[170px] max-w-[280px] px-6 py-3 ${alignCls} ${colorCls} ${
             isSelected ? "ring-2 ring-offset-1 ring-emerald-400 ring-offset-transparent shadow-xl" : ""
           }`}
@@ -301,6 +337,11 @@ export default function FlowNodeCard({
             {TYPE_LABELS[node.type]}
             {node.sla && <span className="ml-1 text-emerald-200">SLA {node.sla}</span>}
           </div>
+          {stageBadge && (
+            <div className="mt-0.5 text-[9.5px] font-semibold uppercase tracking-wide opacity-80">
+              Stage · {stageBadge}
+            </div>
+          )}
           <div className={`${sizeCls.title} font-bold leading-snug mt-0.5`}>{node.label}</div>
           {node.detail && (
             <div className={`${sizeCls.detail} leading-relaxed opacity-80 mt-0.5`}>{node.detail}</div>
@@ -395,7 +436,8 @@ export default function FlowNodeCard({
         <div className={`flex ${flexDir} gap-2.5 items-center`}>
           <div className="relative shrink-0">
             <div
-              style={{ ...customStyle }}
+              style={{ ...customStyle, ...actorOutline }}
+              title={actorTitle}
               className={`rounded-lg border shadow-sm px-4 py-2 flex items-center justify-center font-bold text-xs ${colorCls} ${
                 isSelected ? "ring-2 ring-offset-1 ring-emerald-400 ring-offset-transparent shadow-xl" : ""
               }`}
@@ -419,7 +461,8 @@ export default function FlowNodeCard({
   return (
     <div {...wrapperProps}>
       <div
-        style={{ ...customStyle, ...widthStyle }}
+        style={{ ...customStyle, ...widthStyle, ...actorOutline }}
+        title={actorTitle}
         className={`relative rounded-[10px] border shadow-sm min-w-[200px] ${
           isDetailed ? "max-w-[340px]" : "max-w-[280px]"
         } ${colorCls} ${
@@ -441,7 +484,15 @@ export default function FlowNodeCard({
             </span>
           )}
         </div>
-        <div className={`px-3.5 pt-2.5 pb-1 ${sizeCls.title} font-bold leading-snug ${alignCls} ${isSub ? "mx-2" : ""}`}>
+        {stageBadge && (
+          <div className={`px-3.5 pt-1.5 flex items-center gap-1.5 ${isSub ? "mx-2" : ""}`}>
+            <span className="text-[8.5px] uppercase tracking-wider font-bold opacity-55">Stage</span>
+            <span className="bg-white/15 border border-white/25 rounded px-1.5 py-[1px] text-[9.5px] font-semibold uppercase tracking-wide leading-tight">
+              {stageBadge}
+            </span>
+          </div>
+        )}
+        <div className={`px-3.5 pt-2 pb-1 ${sizeCls.title} font-bold leading-snug ${alignCls} ${isSub ? "mx-2" : ""}`}>
           {node.label}
         </div>
         {node.detail && (

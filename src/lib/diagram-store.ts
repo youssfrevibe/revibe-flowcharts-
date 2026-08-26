@@ -1,4 +1,4 @@
-import { DiagramMetadata, FlowData } from "./types";
+import { DiagramMetadata, FlowData, FlowNode } from "./types";
 import { getInitialNodes, getInitialConnections } from "./initial-data";
 import { getKBNodes, getKBConnections } from "./kb-data";
 import { backfillConnIds } from "./ops";
@@ -49,7 +49,22 @@ export function getDefaultData(slug: string): FlowData {
 }
 
 function normalize(data: FlowData): FlowData {
-  return { nodes: data.nodes || [], connections: backfillConnIds(data.connections || []) };
+  return { nodes: (data.nodes || []).map(migrateNodeFields), connections: backfillConnIds(data.connections || []) };
+}
+
+/**
+ * Bring older / imported diagrams up to the current node schema:
+ *  - `newOmsStage` (used by imported Revibe process JSON) is folded into the first-class
+ *    `stage` field so the card renders its stage badge without callers having to know
+ *    about the alias. Existing `stage` values win; the old key is preserved for round-trip.
+ * We only touch these two fields; every other property (including custom app-specific
+ * extras like `newOmsFlow`, `oldAppStatus`) is left untouched so nothing is lost on save.
+ */
+function migrateNodeFields(node: FlowNode & { newOmsStage?: string }): FlowNode {
+  if (!node.stage && node.newOmsStage) {
+    return { ...node, stage: node.newOmsStage };
+  }
+  return node;
 }
 
 /* ----------------------------- local cache ----------------------------- */
