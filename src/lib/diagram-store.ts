@@ -53,18 +53,55 @@ function normalize(data: FlowData): FlowData {
 }
 
 /**
- * Bring older / imported diagrams up to the current node schema:
- *  - `newOmsStage` (used by imported Revibe process JSON) is folded into the first-class
- *    `stage` field so the card renders its stage badge without callers having to know
- *    about the alias. Existing `stage` values win; the old key is preserved for round-trip.
- * We only touch these two fields; every other property (including custom app-specific
- * extras like `newOmsFlow`, `oldAppStatus`) is left untouched so nothing is lost on save.
+ * Bring older / imported diagrams up to the current node schema. Two migrations:
+ *
+ *  1. `newOmsStage` (from imported Revibe process JSON) folds into `stage` so nodes that
+ *     never had the first-class field still light up the stage row.
+ *
+ *  2. The old typed `stageKind` + single `stage` combo folds into the new free-text
+ *     `internalStage` / `externalStage` pair. Mapping:
+ *       - "IS+ES"           → both = stage
+ *       - "IS" | "internal" → internalStage = stage
+ *       - "ES" | "external" → externalStage = stage
+ *       - no kind but stage → both = stage (safe default — the stage appears everywhere)
+ *     Nodes that already carry the new fields are left alone; nodes with `internalStage`
+ *     already set (v5-imports use `internalStage` verbatim) keep those values.
+ *
+ * Every other property — including custom app-specific extras like `newOmsFlow` and
+ * `oldAppStatus` — is left untouched so nothing is lost on save.
  */
-function migrateNodeFields(node: FlowNode & { newOmsStage?: string }): FlowNode {
-  if (!node.stage && node.newOmsStage) {
-    return { ...node, stage: node.newOmsStage };
+function migrateNodeFields(
+  node: FlowNode & { newOmsStage?: string; return_internal_stage?: string; return_external_stage?: string }
+): FlowNode {
+  let next: FlowNode & { newOmsStage?: string } = node;
+
+  // newOmsStage → stage (only when nothing better is set).
+  if (!next.stage && !next.internalStage && !next.externalStage && next.newOmsStage) {
+    next = { ...next, stage: next.newOmsStage };
   }
-  return node;
+
+  // snake_case aliases → camelCase, so JSON exports written by hand still work.
+  if (!next.internalStage && node.return_internal_stage) {
+    next = { ...next, internalStage: node.return_internal_stage };
+  }
+  if (!next.externalStage && node.return_external_stage) {
+    next = { ...next, externalStage: node.return_external_stage };
+  }
+
+  // stage + stageKind → internalStage / externalStage.
+  if (!next.internalStage && !next.externalStage && next.stage) {
+    const kind = (next.stageKind || "").toString().toLowerCase();
+    const both = kind === "is+es" || kind === "" || kind === "both";
+    const isInternal = both || kind === "is" || kind === "internal";
+    const isExternal = both || kind === "es" || kind === "external";
+    next = {
+      ...next,
+      internalStage: isInternal ? next.stage : next.internalStage,
+      externalStage: isExternal ? next.stage : next.externalStage,
+    };
+  }
+
+  return next;
 }
 
 /* ----------------------------- local cache ----------------------------- */

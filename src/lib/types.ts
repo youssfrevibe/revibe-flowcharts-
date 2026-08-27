@@ -16,11 +16,12 @@ export type NodeWidth = "compact" | "normal" | "wide" | "xwide";
 export type Actor = "revibe" | "seller" | "system" | "carrier";
 
 /**
- * Whether a stage is customer-facing ("external") or internal-only. Rendered as a small
- * pill next to the stage badge. Omit the field entirely to hide the pill on that node —
- * only nodes that actually classify one way or the other need to set it.
+ * @deprecated Kept for backwards-compatibility with the old two-button picker. New nodes
+ * use free-text `internalStage` / `externalStage` instead. On load, normalize() folds
+ * `stage` + `stageKind` into the new fields; the deprecated fields are then removed on
+ * next save. See [[FlowNode.internalStage]] and [[FlowNode.externalStage]].
  */
-export type StageKind = "internal" | "external";
+export type StageKind = "internal" | "external" | "IS" | "ES" | "IS+ES";
 
 export interface FlowNode {
   id: string;
@@ -44,13 +45,19 @@ export interface FlowNode {
   textSize?: TextSize;
   /** Optional node width override or preset. */
   customWidth?: number | NodeWidth;
-  /** Business stage this card belongs to (e.g. "Under QC", "Ready for refund"). Rendered
-   * above the label as an ALL-CAPS stage badge — meant for the process-tracking value,
-   * not extra description. */
+  /** @deprecated Legacy single stage — migrated by normalize() into `internalStage` /
+   * `externalStage`. Kept on the type so old JSON parses cleanly. */
   stage?: string;
-  /** Whether the stage is internal-only or customer-facing (external). Rendered as a
-   * small pill next to the stage badge; omit the field entirely to hide the pill. */
+  /** @deprecated Legacy typed kind — replaced by free-text `internalStage` /
+   * `externalStage`. */
   stageKind?: StageKind;
+  /** The stage name tracked internally by the team (e.g. "Send to LAB",
+   * "Pending LAB collection"). Free text — anything the process uses. Renders as
+   * `internal_stage = <value>` on the card. Omit to hide the internal line. */
+  internalStage?: string;
+  /** The stage name shown to the customer (e.g. "Expert revision", "Under QC"). Free
+   * text. Renders as `external_stage = <value>`. Omit to hide the external line. */
+  externalStage?: string;
   /** Who performs this action — controls the card's border color so responsibility is
    * visually scannable across the flow. See [[Actor]]. */
   actor?: Actor;

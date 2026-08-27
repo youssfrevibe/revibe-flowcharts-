@@ -105,33 +105,47 @@ export default function FlowNodeCard({
     ? { outline: `3px solid ${actorStyle.ring}`, outlineOffset: 2 }
     : {};
   const actorTitle = actorStyle ? `${actorStyle.label} — ${actorStyle.desc}` : undefined;
-  const stageBadge = node.stage && node.stage.trim().length > 0 ? node.stage.trim() : null;
-  const stageKind = node.stageKind; // "internal" | "external" | undefined — hidden when unset
+  // Stage lines — free-text internal_stage / external_stage values rendered as
+  //   internal_stage = <value>
+  //   external_stage = <value>
+  // Each line is hidden when its field is unset, so nodes that don't classify a stage
+  // simply omit the block. Falls back to the deprecated `node.stage` for any diagram
+  // that hasn't been re-saved through normalize() yet.
+  const internalStage = (node.internalStage || "").trim() || null;
+  const externalStage = (node.externalStage || "").trim() || null;
+  const legacyStage = (node.stage || "").trim() || null;
+  const hasStageBlock = internalStage || externalStage || legacyStage;
+  const stagesShared = internalStage && externalStage && internalStage === externalStage;
 
-  // Small chip rendered next to the stage badge, styled to read at a glance without
-  // stealing attention from the label. Internal = amber-ish; external = teal-ish so the
-  // pair reads as complementary. Returns null when the kind is unset — hiding the chip
-  // entirely on nodes that don't classify either way (per the spec).
-  const renderStageKindChip = (variant: "on-dark" | "on-light") => {
-    if (!stageKind) return null;
-    const isExternal = stageKind === "external";
-    if (variant === "on-dark") {
-      const cls = isExternal
-        ? "bg-teal-400/25 text-teal-100 border-teal-300/40"
-        : "bg-amber-400/25 text-amber-100 border-amber-300/40";
+  const renderStageLines = (variant: "on-dark" | "on-light") => {
+    if (!hasStageBlock) return null;
+    const wrapperCls =
+      variant === "on-dark"
+        ? "text-white/90"
+        : "text-zinc-800 dark:text-zinc-200";
+    const keyCls =
+      variant === "on-dark"
+        ? "text-white/55"
+        : "text-zinc-500 dark:text-zinc-400";
+    const line = (k: string, v: string) => (
+      <div className="flex items-baseline gap-1.5 leading-tight">
+        <span className={`text-[9px] uppercase tracking-wider font-bold ${keyCls}`}>{k}</span>
+        <span className="text-[10.5px] font-semibold">{v}</span>
+      </div>
+    );
+    if (stagesShared && internalStage) {
       return (
-        <span className={`inline-flex items-center border rounded px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wide ${cls}`}>
-          {stageKind}
-        </span>
+        <div className={`space-y-0.5 ${wrapperCls}`}>
+          {line("internal_stage = external_stage", internalStage)}
+        </div>
       );
     }
-    const cls = isExternal
-      ? "bg-teal-100 text-teal-800 border-teal-200 dark:bg-teal-950/60 dark:text-teal-200 dark:border-teal-800/60"
-      : "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/60 dark:text-amber-200 dark:border-amber-800/60";
     return (
-      <span className={`inline-flex items-center border rounded px-1.5 py-[1px] text-[9px] font-bold uppercase tracking-wide ${cls}`}>
-        {stageKind}
-      </span>
+      <div className={`space-y-0.5 ${wrapperCls}`}>
+        {internalStage && line("internal_stage", internalStage)}
+        {externalStage && line("external_stage", externalStage)}
+        {!internalStage && !externalStage && legacyStage && line("stage", legacyStage)}
+      </div>
     );
   };
 
@@ -217,12 +231,7 @@ export default function FlowNodeCard({
         <span>{TYPE_LABELS[node.type]}</span>
         {node.sla && <span className="text-emerald-600 dark:text-emerald-400 font-mono">· {node.sla}</span>}
       </div>
-      {stageBadge && (
-        <div className="mb-0.5 flex items-center gap-1.5 flex-wrap text-[9.5px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-          <span>Stage · <span className="text-zinc-800 dark:text-zinc-200">{stageBadge}</span></span>
-          {renderStageKindChip("on-light")}
-        </div>
-      )}
+      {hasStageBlock && <div className="mb-1">{renderStageLines("on-light")}</div>}
       <div className={`${sizeCls.title} font-bold leading-snug text-zinc-900 dark:text-zinc-100`}>
         {node.label}
       </div>
@@ -302,12 +311,7 @@ export default function FlowNodeCard({
               Decision
               {node.sla && <span className="ml-1 text-emerald-200">· {node.sla}</span>}
             </div>
-            {stageBadge && (
-              <div className="flex items-center gap-1 flex-wrap justify-center text-[9px] font-semibold uppercase tracking-wide text-white/70 leading-tight">
-                <span>Stage · {stageBadge}</span>
-                {renderStageKindChip("on-dark")}
-              </div>
-            )}
+            {hasStageBlock && <div className="mt-0.5">{renderStageLines("on-dark")}</div>}
             <div className={`${sizeCls.title} font-bold leading-snug text-white`}>{node.label}</div>
             {node.detail && (
               <div className={`${sizeCls.detail} leading-tight text-white/75 mt-1 line-clamp-2`}>
@@ -367,12 +371,7 @@ export default function FlowNodeCard({
             {TYPE_LABELS[node.type]}
             {node.sla && <span className="ml-1 text-emerald-200">SLA {node.sla}</span>}
           </div>
-          {stageBadge && (
-            <div className="mt-0.5 flex items-center gap-1.5 flex-wrap text-[9.5px] font-semibold uppercase tracking-wide opacity-80">
-              <span>Stage · {stageBadge}</span>
-              {renderStageKindChip("on-dark")}
-            </div>
-          )}
+          {hasStageBlock && <div className="mt-0.5">{renderStageLines("on-dark")}</div>}
           <div className={`${sizeCls.title} font-bold leading-snug mt-0.5`}>{node.label}</div>
           {node.detail && (
             <div className={`${sizeCls.detail} leading-relaxed opacity-80 mt-0.5`}>{node.detail}</div>
@@ -515,14 +514,8 @@ export default function FlowNodeCard({
             </span>
           )}
         </div>
-        {stageBadge && (
-          <div className={`px-3.5 pt-1.5 flex items-center gap-1.5 flex-wrap ${isSub ? "mx-2" : ""}`}>
-            <span className="text-[8.5px] uppercase tracking-wider font-bold opacity-55">Stage</span>
-            <span className="bg-white/15 border border-white/25 rounded px-1.5 py-[1px] text-[9.5px] font-semibold uppercase tracking-wide leading-tight">
-              {stageBadge}
-            </span>
-            {renderStageKindChip("on-dark")}
-          </div>
+        {hasStageBlock && (
+          <div className={`px-3.5 pt-1.5 ${isSub ? "mx-2" : ""}`}>{renderStageLines("on-dark")}</div>
         )}
         <div className={`px-3.5 pt-2 pb-1 ${sizeCls.title} font-bold leading-snug ${alignCls} ${isSub ? "mx-2" : ""}`}>
           {node.label}
