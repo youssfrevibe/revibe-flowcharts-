@@ -16,6 +16,7 @@ import {
   BUILTIN_DIAGRAMS,
 } from "@/lib/diagram-store";
 import ThemeToggle from "@/components/ThemeToggle";
+import { ARRANGE_ON_OPEN_KEY } from "@/components/FlowCanvas";
 
 const THEME_COLORS = [
   { id: "emerald", name: "Emerald", fill: "#065f46" },
@@ -36,6 +37,13 @@ export default function Home() {
   const [filter, setFilter] = useState<"all" | "custom" | "builtin">("all");
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const fileInputRef = useState<HTMLInputElement | null>(null);
+
+  // Paste-JSON deploy
+  const [showPaste, setShowPaste] = useState(false);
+  const [pasteJSON, setPasteJSON] = useState("");
+  const [pasteTitle, setPasteTitle] = useState("");
+  const [pasteError, setPasteError] = useState<string | null>(null);
+  const [deploying, setDeploying] = useState(false);
 
   // Create Modal
   const [showModal, setShowModal] = useState(false);
@@ -78,36 +86,80 @@ export default function Home() {
     window.location.href = `/diagram/${created.slug}`;
   };
 
+  /**
+   * Turn raw flowchart JSON into a live diagram. Shared by the file picker, the
+   * drag-and-drop target and the paste box, so all three behave identically.
+   *
+   * Coordinates in the source are left as-is here and arranged once on the canvas
+   * instead — auto-layout needs the measured card sizes, which only exist there.
+   */
+  const deployFlowchartJSON = async (raw: string, fallbackTitle: string) => {
+    let parsed: { nodes?: unknown; connections?: unknown };
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error("That is not valid JSON.");
+    }
+    if (!parsed || !Array.isArray(parsed.nodes) || parsed.nodes.length === 0) {
+      throw new Error('JSON needs a non-empty "nodes" array.');
+    }
+    const nodes = parsed.nodes as any[];
+    const ids = new Set<string>();
+    for (const n of nodes) {
+      if (!n || typeof n.id !== "string" || !n.id) throw new Error("Every node needs a string \"id\".");
+      if (ids.has(n.id)) throw new Error(`Duplicate node id: ${n.id}`);
+      ids.add(n.id);
+    }
+    let connections = (Array.isArray(parsed.connections) ? parsed.connections : []) as any[];
+    // Drop pathways that point at nodes which are not in the file — they would render as
+    // stray lines into empty space.
+    connections = connections.filter((c) => c && ids.has(c.from) && ids.has(c.to));
+    if (connections.length === 0 && nodes.length > 1) {
+      const sorted = [...nodes].sort((a: any, b: any) => (a.y || 0) - (b.y || 0) || (a.x || 0) - (b.x || 0));
+      connections = sorted.slice(0, -1).map((src: any, i: number) => ({
+        id: `c_${i}_${Date.now()}`,
+        from: src.id,
+        to: sorted[i + 1].id,
+        label: src.type === "decision" ? "Yes" : "",
+        type: src.type === "decision" ? "cyes" : "",
+      }));
+    }
+    const diagramTitle = fallbackTitle.trim() || "Imported Flowchart";
+    const created = await createCustomDiagram(diagramTitle, "Imported from JSON");
+    await saveToCloud(
+      created.slug,
+      { nodes, connections },
+      { title: diagramTitle, description: "Imported from JSON", color: "emerald", isCustom: true }
+    );
+    try {
+      localStorage.setItem(ARRANGE_ON_OPEN_KEY, created.slug);
+    } catch {}
+    window.location.href = `/diagram/${created.slug}`;
+  };
+
   const handleImportFile = (file: File) => {
     const reader = new FileReader();
     reader.onload = async (e) => {
+      const name = file.name.replace(/\.json$/i, "").replace(/[-_]/g, " ");
       try {
-        const parsed = JSON.parse(e.target?.result as string);
-        if (Array.isArray(parsed.nodes)) {
-          const diagramTitle = file.name.replace(/\.json$/i, "").replace(/[-_]/g, " ") || "Imported Flowchart";
-          const nodes = parsed.nodes;
-          let connections = parsed.connections || [];
-          if (connections.length === 0 && nodes.length > 1) {
-            const sorted = [...nodes].sort((a: any, b: any) => (a.y || 0) - (b.y || 0) || (a.x || 0) - (b.x || 0));
-            connections = sorted.slice(0, -1).map((src: any, i: number) => ({
-              id: `c_${i}_${Date.now()}`,
-              from: src.id,
-              to: sorted[i + 1].id,
-              label: src.type === "decision" ? "Yes" : "",
-              type: src.type === "decision" ? "cyes" : "",
-            }));
-          }
-          const created = await createCustomDiagram(diagramTitle, "Imported from JSON backup");
-          await saveToCloud(created.slug, { nodes, connections }, { title: diagramTitle, description: "Imported from JSON backup", color: "emerald", isCustom: true });
-          window.location.href = `/diagram/${created.slug}`;
-        } else {
-          alert("Invalid flowchart JSON format.");
-        }
-      } catch {
-        alert("Failed to parse flowchart JSON.");
+        await deployFlowchartJSON(e.target?.result as string, name);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : "Failed to import flowchart JSON.");
       }
     };
     reader.readAsText(file);
+  };
+
+  const handleDeployPaste = async () => {
+    if (deploying) return;
+    setDeploying(true);
+    setPasteError(null);
+    try {
+      await deployFlowchartJSON(pasteJSON, pasteTitle);
+    } catch (err) {
+      setPasteError(err instanceof Error ? err.message : "Failed to deploy flowchart.");
+      setDeploying(false);
+    }
   };
 
   const handleOpenEdit = (e: React.MouseEvent, d: DiagramMetadata) => {
@@ -229,6 +281,18 @@ export default function Home() {
                 }}
               />
             </label>
+            <button
+              onClick={() => {
+                setPasteError(null);
+                setShowPaste(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 dark:border-zinc-700/80 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-semibold text-xs rounded-xl transition-colors shadow-2xs"
+            >
+              <svg className="w-3.5 h-3.5 text-zinc-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m-7-8h8a2 2 0 012 2v9a2 2 0 01-2 2H8a2 2 0 01-2-2v-9a2 2 0 012-2zm1-4h6v4H9V4z" />
+              </svg>
+              <span>Paste JSON</span>
+            </button>
             <button
               onClick={() => setShowModal(true)}
               className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-semibold text-xs rounded-xl shadow-md shadow-sky-600/20 transition-all active:scale-95"
@@ -442,6 +506,76 @@ export default function Home() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Paste JSON → deploy a flowchart straight from source */}
+        {showPaste && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+            <div className="w-full max-w-2xl bg-white dark:bg-zinc-800 rounded-2xl border border-zinc-200 dark:border-zinc-700 shadow-2xl p-6">
+              <h2 className="text-lg font-bold font-display text-zinc-900 dark:text-zinc-100 mb-1">
+                Deploy from JSON
+              </h2>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-5">
+                Paste a flowchart export and it goes live as a new chart, auto-arranged on first open.
+              </p>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-1.5">
+                    Title
+                  </label>
+                  <input
+                    value={pasteTitle}
+                    onChange={(e) => setPasteTitle(e.target.value)}
+                    placeholder="Returns &amp; Refunds"
+                    className="w-full px-3 py-2 text-sm rounded-xl border border-zinc-200 dark:border-zinc-700 bg-transparent text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-1.5">
+                    Flowchart JSON
+                  </label>
+                  <textarea
+                    value={pasteJSON}
+                    onChange={(e) => {
+                      setPasteJSON(e.target.value);
+                      if (pasteError) setPasteError(null);
+                    }}
+                    spellCheck={false}
+                    rows={12}
+                    placeholder={`{"nodes": [ ... ], "connections": [ ... ]}`}
+                    className="w-full px-3 py-2 text-[11px] font-mono leading-relaxed rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/60 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-500 resize-y"
+                  />
+                  <div className="mt-1.5 text-[11px] h-4">
+                    {pasteError ? (
+                      <span className="text-rose-600 dark:text-rose-400 font-semibold">{pasteError}</span>
+                    ) : (
+                      <span className="text-zinc-400 dark:text-zinc-500 tabular-nums">
+                        {pasteJSON.length > 0 ? `${pasteJSON.length.toLocaleString()} characters` : ""}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 mt-5">
+                <button
+                  onClick={() => setShowPaste(false)}
+                  className="px-4 py-2 text-xs font-semibold rounded-xl text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeployPaste}
+                  disabled={deploying || pasteJSON.trim().length === 0}
+                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white shadow-md shadow-sky-600/20 transition-all active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
+                >
+                  {deploying ? "Deploying…" : "Deploy Flowchart"}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

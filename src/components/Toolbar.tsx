@@ -14,6 +14,8 @@ interface Props {
   canUndo: boolean;
   canRedo: boolean;
   onShortcuts: () => void;
+  onFind?: () => void;
+  onStats?: () => void;
 }
 
 function Btn({
@@ -108,6 +110,19 @@ export default function Toolbar(p: Props) {
       </Btn>
 
       <Sep />
+
+      {p.onFind && (
+        <Btn title="Find & Replace" shortcut="Ctrl+F" onClick={p.onFind}>
+          <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </Btn>
+      )}
+
+      {p.onStats && (
+        <Btn title="Diagram Insights" shortcut="I" onClick={p.onStats}>
+          <path d="M3 3v18h18" />
+          <path d="M18 9l-5 5-4-4-4 4" />
+        </Btn>
+      )}
 
       <Btn title="Auto-Arrange Diagram" shortcut="Ctrl+L" onClick={p.onOrganize}>
         <path d="M3 4h7v7H3zM14 4h7v4h-7zM14 12h7v8h-7zM3 15h7v5H3z" />

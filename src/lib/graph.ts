@@ -139,7 +139,55 @@ export function autoLayout(
     }
   });
 
-  // Assign layer = longest path from any source. Bounded relaxation guards against cycles.
+  // Break cycles before layering. A process map is full of rework loops ("under revision"
+  // going back for another check), and longest-path layering has no fixed point on a cycle:
+  // every relaxation pass pushes the loop members one layer further right, so a handful of
+  // back edges is enough to fling nodes out to layer 300+ and destroy the left-to-right
+  // spine. Depth-first search finds the back edges; they are dropped from the layering
+  // graph only — the pathways still render, they just stop dictating column order.
+  const UNVISITED = 0;
+  const IN_PROGRESS = 1;
+  const DONE = 2;
+  const mark = new Map<string, number>();
+  nodes.forEach((n) => mark.set(n.id, UNVISITED));
+  const backEdges = new Set<string>();
+  const edgeKey = (from: string, to: string) => `${from} -> ${to}`;
+  for (const root of nodes) {
+    if (mark.get(root.id) !== UNVISITED) continue;
+    // Iterative DFS: a 1000-node import would blow the stack with recursion.
+    const stack: { id: string; next: number }[] = [{ id: root.id, next: 0 }];
+    mark.set(root.id, IN_PROGRESS);
+    while (stack.length) {
+      const top = stack[stack.length - 1];
+      const tos = outAdj.get(top.id)!;
+      if (top.next >= tos.length) {
+        mark.set(top.id, DONE);
+        stack.pop();
+        continue;
+      }
+      const to = tos[top.next++];
+      const state = mark.get(to);
+      if (state === IN_PROGRESS) {
+        // `to` is on the current path, so this edge closes a loop.
+        backEdges.add(edgeKey(top.id, to));
+      } else if (state === UNVISITED) {
+        mark.set(to, IN_PROGRESS);
+        stack.push({ id: to, next: 0 });
+      }
+    }
+  }
+  if (backEdges.size > 0) {
+    for (const [from, tos] of outAdj) {
+      const kept = tos.filter((to) => !backEdges.has(edgeKey(from, to)));
+      if (kept.length !== tos.length) outAdj.set(from, kept);
+    }
+    nodes.forEach((n) => indeg.set(n.id, 0));
+    for (const [, tos] of outAdj) {
+      for (const to of tos) indeg.set(to, (indeg.get(to) || 0) + 1);
+    }
+  }
+
+  // Assign layer = longest path from any source. The graph is acyclic by now.
   const layer = new Map<string, number>();
   const roots = nodes.filter((n) => (indeg.get(n.id) || 0) === 0).map((n) => n.id);
   const seeds = roots.length ? roots : [nodes[0].id];

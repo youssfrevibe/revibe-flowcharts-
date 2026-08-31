@@ -481,6 +481,49 @@ function NodeProps({
         </select>
       </Section>
 
+      {multi && !readOnly && (
+        <Section title="Batch Operations">
+          <div className="space-y-2">
+            <div>
+              <span className="text-[10px] block mb-1" style={{ color: "var(--ui-text-faint)" }}>Set SLA for all</span>
+              <input
+                className="ui-field text-xs"
+                placeholder={shared((n) => n.sla) ?? "e.g. 24h, 30 mins..."}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    onPatchNodes({ sla: (e.target as HTMLInputElement).value || undefined });
+                  }
+                }}
+              />
+            </div>
+            <div>
+              <span className="text-[10px] block mb-1" style={{ color: "var(--ui-text-faint)" }}>Set Internal Stage for all</span>
+              <input
+                className="ui-field text-xs"
+                placeholder={shared((n) => n.internalStage) ?? "e.g. LAB_PROCESSING"}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    onPatchNodes({ internalStage: (e.target as HTMLInputElement).value || undefined });
+                  }
+                }}
+              />
+            </div>
+            <div>
+              <span className="text-[10px] block mb-1" style={{ color: "var(--ui-text-faint)" }}>Set External Stage for all</span>
+              <input
+                className="ui-field text-xs"
+                placeholder={shared((n) => n.externalStage) ?? "e.g. Under Revision"}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    onPatchNodes({ externalStage: (e.target as HTMLInputElement).value || undefined });
+                  }
+                }}
+              />
+            </div>
+          </div>
+        </Section>
+      )}
+
       <Section title="Fill">
         <div className="flex flex-wrap gap-1.5">
           <button

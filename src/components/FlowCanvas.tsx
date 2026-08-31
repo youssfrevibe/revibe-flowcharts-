@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
+import { useCanvasStore } from "@/lib/store";
 import { FlowNode, FlowConnection, FlowData, NodeType, ConnType, Op, Collaborator, Port, TextPosition, Pt, Actor } from "@/lib/types";
 import {
   getDefaultData,
@@ -35,8 +36,18 @@ import NamePrompt from "./NamePrompt";
 import AIGenerateModal from "./AIGenerateModal";
 import VersionHistory from "./VersionHistory";
 import CommandPalette from "./CommandPalette";
+import FindReplaceBar from "./FindReplaceBar";
+import DiagramStats from "./DiagramStats";
 import { applyAIEdits, describeCounts } from "@/lib/ai-edit";
 import { AIEditOp } from "@/lib/ai-schema";
+import { listTemplates, saveTemplate, deleteTemplate, templateToNode, NodeTemplate } from "@/lib/templates";
+
+/** Set by the importer so the first canvas to open a deployed flowchart arranges it. */
+export const ARRANGE_ON_OPEN_KEY = "flow_arrange_on_open";
+/** Below this many nodes we render everything, so every card gets measured. */
+const CULL_THRESHOLD = 150;
+/** Screen-pixel halo around the viewport, so nothing pops in at the edges while panning. */
+const CULL_MARGIN = 800;
 
 interface FlowCanvasProps {
   slug: string;
@@ -71,10 +82,22 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     return false;
   });
 
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  // Selection lives in a shared Zustand store. The refs mirror it because event handlers
+  // read the selection synchronously, before React has re-rendered — so every writer has
+  // to go through these setters, or the ref and the store drift apart.
+  const selectedIds = useCanvasStore((state) => state.selectedIds);
   const selRef = useRef<string[]>([]);
-  const [selectedConn, setSelectedConn] = useState<string | null>(null);
+  const setSelectedIds = useCallback((ids: string[]) => {
+    selRef.current = ids;
+    useCanvasStore.getState().setSelected(ids);
+  }, []);
+
+  const selectedConn = useCanvasStore((state) => state.selectedConn);
   const selectedConnRef = useRef<string | null>(null);
+  const setSelectedConn = useCallback((id: string | null) => {
+    selectedConnRef.current = id;
+    useCanvasStore.getState().setSelectedConn(id);
+  }, []);
 
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
@@ -95,6 +118,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const [showAI, setShowAI] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [showFind, setShowFind] = useState<"find" | "replace" | null>(null);
+  const [showStats, setShowStats] = useState(false);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
   const [layoutPrefs, setLayoutPrefs] = useState<LayoutPrefs>(DEFAULT_PREFS);
@@ -104,6 +129,30 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const [ghost, setGhost] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [labelEdit, setLabelEdit] = useState<{ id: string; sx: number; sy: number; value: string } | null>(null);
   const [viewport, setViewport] = useState({ w: 0, h: 0, left: 0, top: 0 });
+  const [arranging, setArranging] = useState(false);
+  // `loaded` flips true as soon as the local cache paints, which is BEFORE the cloud copy
+  // lands and replaces it. Anything that rewrites the document on open has to wait for this
+  // instead, or the cloud response silently undoes the rewrite.
+  const [docSettled, setDocSettled] = useState(false);
+
+  // Viewport culling. Only worth it on big diagrams, and deliberately skipped below the
+  // threshold: node cards are what the ResizeObserver measures into `sizes`, and routing,
+  // auto-layout, fit-view and export all read those measurements — unmounting a node the
+  // user has never scrolled past would leave it stuck on the 210x84 fallback.
+  const visibleNodes = useMemo(() => {
+    // While an arrange is pending every card has to stay mounted, or the ones off-screen
+    // never get measured and the layout falls back to guessed dimensions.
+    if (arranging || data.nodes.length <= CULL_THRESHOLD || !viewport.w || !viewport.h) return data.nodes;
+    const margin = CULL_MARGIN / zoom;
+    const left = -pan.x / zoom - margin;
+    const top = -pan.y / zoom - margin;
+    const right = left + viewport.w / zoom + margin * 2;
+    const bottom = top + viewport.h / zoom + margin * 2;
+    return data.nodes.filter((n) => {
+      const s = sizes.get(n.id) || { w: 210, h: 84 };
+      return n.x + s.w > left && n.x < right && n.y + s.h > top && n.y < bottom;
+    });
+  }, [arranging, data.nodes, pan, zoom, viewport, sizes]);
   // Both rails start hidden: most visits to a flowchart are to read it, not to edit it, so
   // the diagram gets the whole window until you ask for the editing tools. The choice is
   // remembered, so anyone who does edit keeps their panels open next time.
@@ -228,7 +277,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   // an input yet — or just having one open — still fired canvas shortcuts underneath it,
   // so "c" scattered comment nodes behind the dialog and Delete removed the selection.
   const modalOpen =
-    Boolean(editNode) || showHandover || showHelp || showAI || showHistory || askName || isEditingTitle || showCommandPalette;
+    Boolean(editNode) || showHandover || showHelp || showAI || showHistory || askName || isEditingTitle || showCommandPalette || showStats;
   const modalOpenRef = useRef(modalOpen);
   modalOpenRef.current = modalOpen;
 
@@ -243,27 +292,10 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     setTempSubtitle(subtitle);
   }, [subtitle]);
 
-  /* -------------------------- document data load ------------------------ */
-  useEffect(() => {
-    let alive = true;
-    const cached = getCachedData(slug);
-    if (cached) {
-      dataRef.current = cached;
-      setData(cached);
-      setLoaded(true);
-    }
-    fetchCloudData(slug).then((cloud) => {
-      if (!alive) return;
-      if (cloud) {
-        dataRef.current = cloud;
-        setData(cloud);
-      }
-      setLoaded(true);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [slug]);
+  // NOTE: the document load lives in a single effect further down. There used to be a
+  // second copy here that fetched the same slug in parallel; whichever response landed
+  // last won, which double-fetched on every open and could clobber a just-applied
+  // auto-arrange with the pre-arrange coordinates.
 
   /* ------------------------------ identity ----------------------------- */
   useEffect(() => {
@@ -383,6 +415,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     let cancelled = false;
     // Navigating between diagrams reuses this component (same route), so reset per-slug view state.
     setLoaded(false);
+    setDocSettled(false);
     // Instant paint from local cache (post-mount, so no hydration mismatch).
     const cached = getCachedData(slug);
     if (cached) {
@@ -400,6 +433,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         saveToCloud(slug, dataRef.current, { title, description: subtitle });
       }
       setLoaded(true);
+      setDocSettled(true);
       // Fit after node sizes have been measured (rAF + short delay covers the measurement pass).
       setTimeout(() => fitRef.current(), 180);
     })();
@@ -509,6 +543,11 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       return changed ? next : prev;
     });
   }, [data.nodes]);
+
+  // Synchronous view of the measured sizes, for code that has to read them after an
+  // await rather than at render time.
+  const sizesRef = useRef(sizes);
+  sizesRef.current = sizes;
 
   /* ----------------------- viewport size tracking ---------------------- */
   useEffect(() => {
@@ -810,6 +849,72 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     );
     select(newNodes.map((n) => n.id));
   }, [commit, select, uid]);
+
+  /**
+   * Arrange a document that was just replaced wholesale (file import, pasted JSON, AI
+   * draft). Auto-layout reads the MEASURED card sizes, and cards that React has only
+   * just mounted have not been through the ResizeObserver yet — arranging against the
+   * 210x84 fallback is what made a freshly imported diagram come out overlapping and
+   * scattered. So wait for the measurements to land first, then arrange.
+   *
+   * Hand-set ports and hand-drawn waypoints are dropped at the same time: waypoints are
+   * absolute world coordinates, so once every node has moved they drag the pathways back
+   * across the new arrangement.
+   */
+  const measureThenLayout = useCallback(
+    async (ids: string[]) => {
+      setArranging(true);
+      try {
+        const frame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+        const pending = new Set(ids);
+        const deadline = performance.now() + 4000;
+        while (pending.size > 0 && performance.now() < deadline) {
+          await frame();
+          for (const id of pending) if (sizesRef.current.has(id)) pending.delete(id);
+        }
+        // One more frame so the final ResizeObserver flush is in `sizes` before we read it.
+        await frame();
+        await frame();
+
+        const conns = dataRef.current.connections.map((c) => {
+          if (c.fromPort === undefined && c.toPort === undefined && c.waypoints === undefined) return c;
+          const { fromPort, toPort, waypoints, ...rest } = c;
+          void fromPort;
+          void toPort;
+          void waypoints;
+          return rest;
+        });
+        const laid = autoLayout(dataRef.current.nodes, conns, sizesRef.current, layoutPrefsRef.current);
+        commit(() => ({ nodes: laid, connections: conns }), [
+          { t: "doc.replace", origin: uid, nodes: laid, connections: conns },
+        ]);
+      } finally {
+        setArranging(false);
+      }
+      setTimeout(() => fitView(), 80);
+    },
+    [commit, fitView, uid]
+  );
+
+  // A flowchart deployed from the home page (uploaded file or pasted JSON) arrives with
+  // whatever coordinates the source had — often a 20,000px-wide sprawl. The importer
+  // leaves a marker so the first canvas that opens it arranges it once, here, where the
+  // cards actually exist and can be measured.
+  useEffect(() => {
+    if (!docSettled || readOnly) return;
+    if (typeof window === "undefined") return;
+    let flag: string | null = null;
+    try {
+      flag = localStorage.getItem(ARRANGE_ON_OPEN_KEY);
+    } catch {
+      return;
+    }
+    if (flag !== slug) return;
+    try {
+      localStorage.removeItem(ARRANGE_ON_OPEN_KEY);
+    } catch {}
+    void measureThenLayout(dataRef.current.nodes.map((n) => n.id));
+  }, [docSettled, readOnly, slug, measureThenLayout]);
 
   const runAutoLayout = useCallback(() => {
     const laid = autoLayout(dataRef.current.nodes, dataRef.current.connections, sizes, layoutPrefsRef.current);
@@ -1388,7 +1493,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     if (modalOpenRef.current) {
       if (k === "escape") {
         e.preventDefault();
-        if (isEditingTitle) setIsEditingTitle(false);
+        if (showStats) setShowStats(false);
+        else if (isEditingTitle) setIsEditingTitle(false);
         else if (showHelp) setShowHelp(false);
         else if (showHistory) setShowHistory(false);
         else if (showAI) setShowAI(false);
@@ -1422,7 +1528,13 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       return;
     }
     if (mod && k === "c") {
-      copySelection();
+      // Shift copies the whole diagram to the clipboard as a PNG instead of copying nodes.
+      if (e.shiftKey) {
+        e.preventDefault();
+        copyImageToClipboard();
+      } else {
+        copySelection();
+      }
       return;
     }
     if (mod && k === "x") {
@@ -1481,6 +1593,60 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       setShowCommandPalette((prev) => !prev);
       return;
     }
+    // Find & Replace
+    if (mod && k === "f") {
+      e.preventDefault();
+      setShowFind("find");
+      return;
+    }
+    if (mod && k === "h" && !e.shiftKey) {
+      e.preventDefault();
+      setShowFind("replace");
+      return;
+    }
+    // Diagram stats
+    if (k === "i" && !mod && !e.shiftKey) {
+      setShowStats((s) => !s);
+      return;
+    }
+    // Tab / Shift+Tab: cycle through nodes spatially. Only when focus is on the canvas —
+    // anywhere else Tab has to keep doing its job and walk the surrounding controls.
+    if (k === "tab" && (t === cwRef.current || t === canvasRef.current || t === document.body)) {
+      e.preventDefault();
+      const sorted = [...dataRef.current.nodes].sort((a, b) => a.y - b.y || a.x - b.x);
+      if (sorted.length === 0) return;
+      const curId = selRef.current[0];
+      const curIdx = curId ? sorted.findIndex((n) => n.id === curId) : -1;
+      const nextIdx = e.shiftKey
+        ? (curIdx - 1 + sorted.length) % sorted.length
+        : (curIdx + 1) % sorted.length;
+      focusNode(sorted[nextIdx].id);
+      return;
+    }
+    // Home: jump to first start node
+    if (k === "home") {
+      e.preventDefault();
+      const startNode = dataRef.current.nodes.find((n) => n.type === "start");
+      if (startNode) focusNode(startNode.id);
+      return;
+    }
+    // End: jump to first terminal node
+    if (k === "end") {
+      e.preventDefault();
+      const endNode = dataRef.current.nodes.find((n) => n.type === "ok" || n.type === "fail");
+      if (endNode) focusNode(endNode.id);
+      return;
+    }
+    // Y / N on decision: follow Yes/No branch
+    if ((k === "y" || k === "n") && !mod && selRef.current.length === 1) {
+      const curId = selRef.current[0];
+      const curNode = dataRef.current.nodes.find((n) => n.id === curId);
+      if (curNode?.type === "decision") {
+        const branchType = k === "y" ? "cyes" : "cno";
+        const branch = dataRef.current.connections.find((c) => c.from === curId && c.type === branchType);
+        if (branch) { focusNode(branch.to); return; }
+      }
+    }
     if (k === "[" && !mod && selRef.current.length === 1) {
       e.preventDefault();
       const curId = selRef.current[0];
@@ -1514,6 +1680,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       return;
     }
     if (k === "escape") {
+      if (showFind) { setShowFind(null); return; }
+      if (showStats) { setShowStats(false); return; }
       setCtxMenu(null);
       setShowHelp(false);
       setShowExport(false);
@@ -2081,6 +2249,115 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     URL.revokeObjectURL(url);
   };
 
+  const copyImageToClipboard = useCallback(async () => {
+    try {
+      const { svg, width, height } = buildDiagramSVG(dataRef.current.nodes, dataRef.current.connections, sizes);
+      const scale = 2;
+      const img = new Image();
+      const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = width * scale;
+        canvas.height = height * scale;
+        const ctx = canvas.getContext("2d")!;
+        ctx.scale(scale, scale);
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+        canvas.toBlob(async (blob) => {
+          if (blob && navigator.clipboard && window.ClipboardItem) {
+            await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+            setShareCopied(true);
+            setTimeout(() => setShareCopied(false), 2000);
+          }
+        }, "image/png");
+      };
+      img.src = url;
+    } catch (e) {
+      console.error("Failed to copy image", e);
+    }
+  }, [sizes]);
+
+  const batchReplaceText = useCallback(
+    ({ search, replace, regex, ids }: { search: string; replace: string; regex: boolean; ids: string[] }) => {
+      if (readOnly || !search) return 0;
+      const targetIds = new Set(ids);
+      let count = 0;
+      const ops: Op[] = [];
+      commit(
+        (prev) => ({
+          ...prev,
+          nodes: prev.nodes.map((n) => {
+            if (!targetIds.has(n.id)) return n;
+            const updated = { ...n };
+            let changed = false;
+            const fields: (keyof FlowNode)[] = ["label", "detail", "internalStage", "externalStage", "sla"];
+            for (const f of fields) {
+              const val = n[f];
+              if (typeof val === "string" && val) {
+                let newVal = val;
+                if (regex) {
+                  try {
+                    const re = new RegExp(search, "gi");
+                    const matches = val.match(re);
+                    if (matches) {
+                      count += matches.length;
+                      newVal = val.replace(re, replace);
+                    }
+                  } catch {}
+                } else {
+                  const parts = val.split(search);
+                  if (parts.length > 1) {
+                    count += parts.length - 1;
+                    newVal = parts.join(replace);
+                  }
+                }
+                if (newVal !== val) {
+                  (updated as any)[f] = newVal;
+                  changed = true;
+                }
+              }
+            }
+            if (changed) {
+              ops.push({ t: "node.upsert", origin: uid, node: updated });
+              return updated;
+            }
+            return n;
+          }),
+        }),
+        ops
+      );
+      return count;
+    },
+    [commit, readOnly, uid]
+  );
+
+  const addFromTemplate = useCallback(
+    (tpl: NodeTemplate) => {
+      if (readOnly) return;
+      const r = cwRef.current!.getBoundingClientRect();
+      const { pan, zoom } = viewRef.current;
+      const pos = { x: (r.width / 2 - pan.x) / zoom - 105, y: (r.height / 2 - pan.y) / zoom - 42 };
+      const partial = templateToNode(tpl);
+      const n: FlowNode = {
+        id: generateNodeId(),
+        type: partial.type || "step",
+        x: snapVal(pos.x, snap),
+        y: snapVal(pos.y, snap),
+        label: partial.label || "Template Step",
+        detail: partial.detail || "",
+        actor: partial.actor,
+        sla: partial.sla,
+        internalStage: partial.internalStage,
+        externalStage: partial.externalStage,
+        color: partial.color,
+        tools: partial.tools,
+      };
+      commit((prev) => ({ ...prev, nodes: [...prev.nodes, n] }), [{ t: "node.upsert", origin: uid, node: n }]);
+      select([n.id]);
+    },
+    [commit, select, snap, uid, readOnly]
+  );
+
   const loadParsedJSON = useCallback(
     (content: string) => {
       try {
@@ -2100,13 +2377,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
           }
           snapshotNow("Before file import");
           commit(() => ({ nodes, connections }), [{ t: "doc.replace", origin: uid, nodes, connections }]);
-          setTimeout(() => {
-            const laid = autoLayout(dataRef.current.nodes, dataRef.current.connections, sizes, layoutPrefsRef.current);
-            commit((prev) => ({ ...prev, nodes: laid }), [
-              { t: "doc.replace", origin: uid, nodes: laid, connections: dataRef.current.connections },
-            ]);
-            setTimeout(() => fitView(), 80);
-          }, 150);
+          void measureThenLayout(nodes.map((n) => n.id));
         } else {
           alert("Invalid flowchart JSON format.");
         }
@@ -2114,7 +2385,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         alert("Failed to parse flowchart JSON file.");
       }
     },
-    [commit, fitView, layoutPrefs, sizes, snapshotNow, uid]
+    [commit, measureThenLayout, snapshotNow, uid]
   );
 
   const handleImportJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2142,16 +2413,9 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     (nodes: FlowNode[], connections: FlowConnection[]) => {
       snapshotNow("Before AI generation");
       commit(() => ({ nodes, connections }), [{ t: "doc.replace", origin: uid, nodes, connections }]);
-      // Wait for node sizes to be measured, then arrange and fit.
-      setTimeout(() => {
-        const laid = autoLayout(dataRef.current.nodes, dataRef.current.connections, sizes, layoutPrefsRef.current);
-        commit((prev) => ({ ...prev, nodes: laid }), [
-          { t: "doc.replace", origin: uid, nodes: laid, connections: dataRef.current.connections },
-        ]);
-        setTimeout(() => fitView(), 80);
-      }, 350);
+      void measureThenLayout(nodes.map((n) => n.id));
     },
-    [commit, uid, snapshotNow, sizes, fitView]
+    [commit, uid, snapshotNow, measureThenLayout]
   );
 
   /**
@@ -2170,14 +2434,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       if (newTitle && newTitle !== projectTitle) handleSaveTitle(newTitle);
 
       if (counts.added || counts.deleted) {
-        // Wait for the new cards to be measured, then arrange and fit.
-        setTimeout(() => {
-          const laid = autoLayout(dataRef.current.nodes, dataRef.current.connections, sizes, layoutPrefsRef.current);
-          commit((prev) => ({ ...prev, nodes: laid }), [
-            { t: "doc.replace", origin: uid, nodes: laid, connections: dataRef.current.connections },
-          ]);
-          setTimeout(() => fitView(), 80);
-        }, 350);
+        void measureThenLayout(next.nodes.map((n) => n.id));
       }
 
       return describeCounts(counts);
@@ -2370,7 +2627,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
             )}
             {loaded && (
               <div className="relative z-10">
-                {data.nodes.map((node) => (
+                {visibleNodes.map((node) => (
                   <FlowNodeCard
                     key={node.id}
                     node={node}
@@ -2449,6 +2706,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
               canUndo={histRef.current.past.length > 0}
               canRedo={histRef.current.future.length > 0}
               onShortcuts={() => setShowHelp(true)}
+              onFind={() => setShowFind("find")}
+              onStats={() => setShowStats(true)}
             />
           )}
         </div>
@@ -2589,6 +2848,26 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         onExportJSON={doExportJSON}
         currentSlug={slug}
       />
+
+      {showFind && (
+        <FindReplaceBar
+          nodes={data.nodes}
+          mode={showFind}
+          onClose={() => setShowFind(null)}
+          onFocusNode={focusNode}
+          onReplace={batchReplaceText}
+        />
+      )}
+
+      {showStats && (
+        <DiagramStats
+          nodes={data.nodes}
+          connections={data.connections}
+          onClose={() => setShowStats(false)}
+          onFocusNode={focusNode}
+          onSelectNodes={select}
+        />
+      )}
     </div>
   );
 }
