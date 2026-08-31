@@ -212,14 +212,10 @@ input[type="number"] {
   animation: pulse-live 2.4s ease-in-out infinite;
 }
 
-/* GPU hardware acceleration & paint containment */
-.gpu-layer,
+/* Crisp rendering without VRAM layer bloat */
 .flow-node-card {
-  contain: layout style paint;
-  transform: translate3d(0, 0, 0);
-  backface-visibility: hidden;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 svg {
