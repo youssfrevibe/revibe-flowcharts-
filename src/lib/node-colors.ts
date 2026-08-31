@@ -7,109 +7,129 @@ export interface ColorPreset {
   fill: string;
   border: string;
   bgClass: string;
+  accent: string;
   isLight?: boolean;
 }
 
 export const NODE_COLOR_PRESETS: ColorPreset[] = [
-  { id: "emerald", name: "Emerald", fill: "#047857", border: "#059669", bgClass: "bg-emerald-700 border-emerald-700 text-white" },
-  { id: "teal", name: "Teal", fill: "#0f766e", border: "#14b8a6", bgClass: "bg-teal-700 border-teal-700 text-white" },
-  { id: "cyan", name: "Cyan", fill: "#0e7490", border: "#06b6d4", bgClass: "bg-cyan-700 border-cyan-600 text-white" },
-  { id: "blue", name: "Blue", fill: "#1d4ed8", border: "#3b82f6", bgClass: "bg-blue-700 border-blue-600 text-white" },
-  { id: "indigo", name: "Indigo", fill: "#4338ca", border: "#6366f1", bgClass: "bg-indigo-700 border-indigo-600 text-white" },
-  { id: "violet", name: "Violet", fill: "#6d28d9", border: "#8b5cf6", bgClass: "bg-violet-700 border-violet-600 text-white" },
-  { id: "purple", name: "Purple", fill: "#7e22ce", border: "#a855f7", bgClass: "bg-purple-700 border-purple-600 text-white" },
-  { id: "pink", name: "Pink", fill: "#be185d", border: "#ec4899", bgClass: "bg-pink-700 border-pink-600 text-white" },
-  { id: "rose", name: "Rose", fill: "#e11d48", border: "#f43f5e", bgClass: "bg-rose-600 border-rose-600 text-white" },
-  { id: "amber", name: "Amber", fill: "#b45309", border: "#f59e0b", bgClass: "bg-amber-700 border-amber-600 text-white" },
-  { id: "orange", name: "Orange", fill: "#c2410c", border: "#f97316", bgClass: "bg-orange-700 border-orange-600 text-white" },
-  { id: "red", name: "Red", fill: "#dc2626", border: "#ef4444", bgClass: "bg-red-600 border-red-600 text-white" },
-  { id: "slate", name: "Slate", fill: "#334155", border: "#64748b", bgClass: "bg-slate-700 border-slate-600 text-white" },
-  { id: "zinc", name: "Zinc", fill: "#3f3f46", border: "#71717a", bgClass: "bg-zinc-700 border-zinc-600 text-white" },
-  { id: "dark", name: "Dark", fill: "#18181b", border: "#27272a", bgClass: "bg-zinc-900 border-zinc-700 text-white" },
+  { id: "emerald", name: "Emerald", fill: "#065f46", border: "#059669", bgClass: "bg-emerald-800/90 border-emerald-600/70 text-white", accent: "#34d399" },
+  { id: "teal", name: "Teal", fill: "#115e59", border: "#0d9488", bgClass: "bg-teal-800/90 border-teal-600/70 text-white", accent: "#2dd4bf" },
+  { id: "cyan", name: "Cyan", fill: "#155e75", border: "#0891b2", bgClass: "bg-cyan-800/90 border-cyan-600/70 text-white", accent: "#38bdf8" },
+  { id: "blue", name: "Blue", fill: "#1e40af", border: "#2563eb", bgClass: "bg-blue-800/90 border-blue-600/70 text-white", accent: "#60a5fa" },
+  { id: "indigo", name: "Indigo", fill: "#3730a3", border: "#4f46e5", bgClass: "bg-indigo-800/90 border-indigo-600/70 text-white", accent: "#818cf8" },
+  { id: "violet", name: "Violet", fill: "#5b21b6", border: "#7c3aed", bgClass: "bg-violet-800/90 border-violet-600/70 text-white", accent: "#a78bfa" },
+  { id: "purple", name: "Purple", fill: "#6b21a8", border: "#9333ea", bgClass: "bg-purple-800/90 border-purple-600/70 text-white", accent: "#c084fc" },
+  { id: "rose", name: "Rose", fill: "#9f1239", border: "#e11d48", bgClass: "bg-rose-800/90 border-rose-600/70 text-white", accent: "#fb7185" },
+  { id: "amber", name: "Amber", fill: "#92400e", border: "#d97706", bgClass: "bg-amber-800/90 border-amber-600/70 text-white", accent: "#fbbf24" },
+  { id: "orange", name: "Orange", fill: "#9a3412", border: "#ea580c", bgClass: "bg-orange-800/90 border-orange-600/70 text-white", accent: "#fb923c" },
+  { id: "red", name: "Red", fill: "#991b1b", border: "#dc2626", bgClass: "bg-red-800/90 border-red-600/70 text-white", accent: "#f87171" },
+  { id: "slate", name: "Slate", fill: "#1e293b", border: "#334155", bgClass: "bg-slate-800/90 border-slate-600/70 text-white", accent: "#94a3b8" },
+  { id: "zinc", name: "Zinc", fill: "#27272a", border: "#3f3f46", bgClass: "bg-zinc-800/90 border-zinc-600/70 text-white", accent: "#a1a1aa" },
+  { id: "dark", name: "Obsidian", fill: "#18181b", border: "#27272a", bgClass: "bg-zinc-900 border-zinc-700/80 text-white", accent: "#71717a" },
 ];
 
 export const NOTE_COLOR_PRESETS: ColorPreset[] = [
-  { id: "amber", name: "Yellow", fill: "#fef08a", border: "#fde047", bgClass: "bg-amber-100 dark:bg-amber-950/80 border-amber-300 dark:border-amber-700/70 text-amber-950 dark:text-amber-100", isLight: true },
-  { id: "blue", name: "Blue", fill: "#bae6fd", border: "#7dd3fc", bgClass: "bg-sky-100 dark:bg-sky-950/80 border-sky-300 dark:border-sky-700/70 text-sky-950 dark:text-sky-100", isLight: true },
-  { id: "emerald", name: "Green", fill: "#a7f3d0", border: "#6ee7b7", bgClass: "bg-emerald-100 dark:bg-emerald-950/80 border-emerald-300 dark:border-emerald-700/70 text-emerald-950 dark:text-emerald-100", isLight: true },
-  { id: "rose", name: "Pink", fill: "#fecdd3", border: "#fda4af", bgClass: "bg-rose-100 dark:bg-rose-950/80 border-rose-300 dark:border-rose-700/70 text-rose-950 dark:text-rose-100", isLight: true },
-  { id: "violet", name: "Purple", fill: "#e9d5ff", border: "#d8b4fe", bgClass: "bg-purple-100 dark:bg-purple-950/80 border-purple-300 dark:border-purple-700/70 text-purple-950 dark:text-purple-100", isLight: true },
-  { id: "zinc", name: "Gray", fill: "#e4e4e7", border: "#d4d4d8", bgClass: "bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100", isLight: true },
+  { id: "amber", name: "Warm Amber", fill: "#fef3c7", border: "#fde68a", bgClass: "bg-amber-50 dark:bg-amber-950/60 border-amber-200 dark:border-amber-700/60 text-amber-950 dark:text-amber-100", accent: "#f59e0b", isLight: true },
+  { id: "blue", name: "Sky Mist", fill: "#e0f2fe", border: "#bae6fd", bgClass: "bg-sky-50 dark:bg-sky-950/60 border-sky-200 dark:border-sky-700/60 text-sky-950 dark:text-sky-100", accent: "#0ea5e9", isLight: true },
+  { id: "emerald", name: "Mint Sage", fill: "#d1fae5", border: "#a7f3d0", bgClass: "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-200 dark:border-emerald-700/60 text-emerald-950 dark:text-emerald-100", accent: "#10b981", isLight: true },
+  { id: "rose", name: "Blush Pink", fill: "#ffe4e6", border: "#fecdd3", bgClass: "bg-rose-50 dark:bg-rose-950/60 border-rose-200 dark:border-rose-700/60 text-rose-950 dark:text-rose-100", accent: "#f43f5e", isLight: true },
+  { id: "violet", name: "Soft Lavender", fill: "#ede9fe", border: "#ddd6fe", bgClass: "bg-purple-50 dark:bg-purple-950/60 border-purple-200 dark:border-purple-700/60 text-purple-950 dark:text-purple-100", accent: "#8b5cf6", isLight: true },
+  { id: "zinc", name: "Clean Stone", fill: "#f4f4f5", border: "#e4e4e7", bgClass: "bg-zinc-50 dark:bg-zinc-800/80 border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100", accent: "#71717a", isLight: true },
 ];
 
 /**
- * "Who does this action" palette — rendered as the card's outline so a reader can scan the
- * flow and see responsibilities at a glance. Each entry drives an outline colour and a
- * matching pill for the legend/actor picker. Kept vivid so it reads over any node fill.
+ * "Who does this action" palette — refined with icons, clear roles, subtle badges,
+ * and high-contrast styling so responsibilities stand out without harsh visual noise.
  */
 export interface ActorStyle {
   id: Actor;
   label: string;
-  /** Description of who this covers. */
+  shortLabel: string;
+  icon: string;
   desc: string;
-  /** Outer outline (ring) hex — the thing the reader actually sees on the flow. */
   ring: string;
-  /** Small pill background / dot used in the editor and menus. */
+  accent: string;
   pill: string;
-  /** Text colour paired with `pill`. */
+  pillDark: string;
   pillText: string;
+  pillTextDark: string;
 }
 
 export const ACTOR_STYLES: Record<Actor, ActorStyle> = {
   revibe: {
     id: "revibe",
-    label: "Revibe team",
-    desc: "Revibe agent, delegate, or team member does this step",
-    ring: "#a855f7", // purple-500
+    label: "Revibe Team",
+    shortLabel: "Revibe",
+    icon: "👤",
+    desc: "Revibe agent, operations lead, or specialist action",
+    ring: "#a855f7",
+    accent: "#c084fc",
     pill: "#f3e8ff",
-    pillText: "#6b21a8",
+    pillDark: "rgba(168, 85, 247, 0.18)",
+    pillText: "#7e22ce",
+    pillTextDark: "#d8b4fe",
   },
   seller: {
     id: "seller",
-    label: "Seller",
-    desc: "Seller / supplier does this step",
-    ring: "#f97316", // orange-500
+    label: "Seller / Supplier",
+    shortLabel: "Seller",
+    icon: "🏢",
+    desc: "External supplier, merchant, or vendor action",
+    ring: "#f97316",
+    accent: "#fb923c",
     pill: "#ffedd5",
-    pillText: "#9a3412",
+    pillDark: "rgba(249, 115, 22, 0.18)",
+    pillText: "#c2410c",
+    pillTextDark: "#fdba74",
   },
   system: {
     id: "system",
-    label: "System (automatic)",
-    desc: "Automated — done by the system with no human action",
-    ring: "#9ca3af", // gray-400
-    pill: "#e5e7eb",
-    pillText: "#374151",
+    label: "System (Automated)",
+    shortLabel: "System",
+    icon: "⚡",
+    desc: "Automated engine, webhook, or script execution",
+    ring: "#64748b",
+    accent: "#94a3b8",
+    pill: "#f1f5f9",
+    pillDark: "rgba(100, 116, 139, 0.20)",
+    pillText: "#334155",
+    pillTextDark: "#cbd5e1",
   },
   carrier: {
     id: "carrier",
-    label: "Third party / carrier",
-    desc: "Carrier, courier, lab, or another external third party",
-    ring: "#06b6d4", // cyan-500
+    label: "Third Party / Carrier",
+    shortLabel: "Carrier",
+    icon: "🚚",
+    desc: "Courier, shipping partner, repair lab, or QA facility",
+    ring: "#06b6d4",
+    accent: "#38bdf8",
     pill: "#cffafe",
-    pillText: "#155e75",
+    pillDark: "rgba(6, 182, 212, 0.18)",
+    pillText: "#0e7490",
+    pillTextDark: "#67e8f9",
   },
 };
 
 export const ACTOR_ORDER: Actor[] = ["revibe", "seller", "system", "carrier"];
 
 export const DEFAULT_TYPE_FILL: Record<NodeType, string> = {
-  start: "#047857",
-  ok: "#047857",
-  step: "#3f3f46",
-  decision: "#b45309",
-  sub: "#1d4ed8",
-  fail: "#dc2626",
-  note: "#fef08a",
+  start: "#065f46",
+  ok: "#065f46",
+  step: "#27272a",
+  decision: "#92400e",
+  sub: "#3730a3",
+  fail: "#991b1b",
+  note: "#fef3c7",
 };
 
 export const DEFAULT_TYPE_STYLES: Record<NodeType, string> = {
-  start: "bg-emerald-700 border-emerald-700 text-white",
-  step: "bg-zinc-700 border-zinc-600 text-white",
-  decision: "bg-amber-700 border-amber-600 text-white",
-  sub: "bg-blue-700 border-blue-600 border-dashed text-white",
-  ok: "bg-emerald-700 border-emerald-700 text-white",
-  fail: "bg-red-600 border-red-600 text-white",
-  note: "bg-amber-100 dark:bg-amber-950/80 border-amber-300 dark:border-amber-700/70 text-amber-950 dark:text-amber-100",
+  start: "bg-emerald-800/90 border-emerald-600/70 text-white",
+  step: "bg-zinc-800/90 border-zinc-600/60 text-white",
+  decision: "bg-amber-800/90 border-amber-600/70 text-white",
+  sub: "bg-indigo-800/90 border-indigo-500/70 border-dashed text-white",
+  ok: "bg-emerald-800/90 border-emerald-600/70 text-white",
+  fail: "bg-red-800/90 border-red-600/70 text-white",
+  note: "bg-amber-50 dark:bg-amber-950/60 border-amber-200 dark:border-amber-700/60 text-amber-950 dark:text-amber-100",
 };
 
 export function getLuminance(hex: string): number {
@@ -122,11 +142,11 @@ export function getLuminance(hex: string): number {
 }
 
 export function getNodeFill(color?: string, type: NodeType = "step", isNote = false): string {
-  if (!color) return isNote ? "#fef08a" : DEFAULT_TYPE_FILL[type] || "#3f3f46";
+  if (!color) return isNote ? "#fef3c7" : DEFAULT_TYPE_FILL[type] || "#27272a";
   if (color.startsWith("#")) return color;
   const presets = isNote ? NOTE_COLOR_PRESETS : NODE_COLOR_PRESETS;
   const found = presets.find((p) => p.id === color);
-  return found ? found.fill : DEFAULT_TYPE_FILL[type] || "#3f3f46";
+  return found ? found.fill : DEFAULT_TYPE_FILL[type] || "#27272a";
 }
 
 export function getNodeStyle(
@@ -141,20 +161,20 @@ export function getNodeStyle(
     const textColor = lum > 0.6 ? "#18181b" : "#ffffff";
     const customStyle: React.CSSProperties = {
       backgroundColor: color,
-      borderColor: lum > 0.6 ? "#a1a1aa" : color,
+      borderColor: lum > 0.6 ? "#cbd5e1" : color,
       color: textColor,
     };
-    return { className: "border shadow-sm", customStyle, fill, textColor };
+    return { className: "border shadow-md backdrop-blur-xs", customStyle, fill, textColor };
   }
 
   if (color) {
     const presets = isNote ? NOTE_COLOR_PRESETS : NODE_COLOR_PRESETS;
     const found = presets.find((p) => p.id === color);
     if (found) {
-      return { className: found.bgClass, customStyle: {}, fill: found.fill, textColor: found.isLight ? "#18181b" : "#ffffff" };
+      return { className: `${found.bgClass} shadow-md backdrop-blur-xs`, customStyle: {}, fill: found.fill, textColor: found.isLight ? "#18181b" : "#ffffff" };
     }
   }
 
   const defaultCls = isNote ? DEFAULT_TYPE_STYLES.note : DEFAULT_TYPE_STYLES[type] || DEFAULT_TYPE_STYLES.step;
-  return { className: defaultCls, customStyle: {}, fill, textColor: isNote ? "#18181b" : "#ffffff" };
+  return { className: `${defaultCls} shadow-md backdrop-blur-xs`, customStyle: {}, fill, textColor: isNote ? "#18181b" : "#ffffff" };
 }

@@ -62,6 +62,17 @@ export function applyOp(data: FlowData, op: Op): FlowData {
           : [...data.connections, op.conn],
       };
     }
+    case "conn.waypoints": {
+      // Sent continuously while a pathway is being dragged, so it stays small: only the
+      // route changes, never the label/style, and a peer editing those at the same time
+      // doesn't lose their edit.
+      return {
+        ...data,
+        connections: data.connections.map((c) =>
+          connId(c) === op.id ? { ...c, waypoints: op.waypoints } : c
+        ),
+      };
+    }
     case "conn.delete": {
       return {
         ...data,

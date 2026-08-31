@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect, useLayoutEffect } from "react";
-import { FlowNode, FlowConnection, FlowData, NodeType, ConnType, Op, Collaborator, Port, TextPosition } from "@/lib/types";
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
+import { FlowNode, FlowConnection, FlowData, NodeType, ConnType, Op, Collaborator, Port, TextPosition, Pt, Actor } from "@/lib/types";
 import {
   getDefaultData,
   getCachedData,
@@ -19,19 +19,24 @@ import { NODE_COLOR_PRESETS } from "@/lib/node-colors";
 import { getUser } from "@/lib/user";
 import { useRealtimeDoc } from "@/hooks/useRealtimeDoc";
 import { saveVersion } from "@/lib/versions";
+import { computeRoutes, waypointsAfterSegmentDrag } from "@/lib/routing";
 import FlowNodeCard from "./FlowNodeCard";
-import Connections from "./Connections";
-import EditModal from "./EditModal";
+import TopBar from "./TopBar";
+import Toolbar from "./Toolbar";
+import LayersPanel from "./LayersPanel";
+import InspectorPanel, { AlignKind } from "./InspectorPanel";
 import ContextMenu, { ContextMenuItem } from "./ContextMenu";
+import Connections, { WaypointDragStart, SegmentDragStart, EndpointDragStart } from "./Connections";
+import EditModal from "./EditModal";
 import ProcessHandoverForm from "./ProcessHandoverForm";
 import Minimap from "./Minimap";
 import ShortcutsHelp from "./ShortcutsHelp";
-import PresenceBar from "./PresenceBar";
 import NamePrompt from "./NamePrompt";
-import ThemeToggle from "./ThemeToggle";
 import AIGenerateModal from "./AIGenerateModal";
 import VersionHistory from "./VersionHistory";
-import LayoutPanel from "./LayoutPanel";
+import CommandPalette from "./CommandPalette";
+import { applyAIEdits, describeCounts } from "@/lib/ai-edit";
+import { AIEditOp } from "@/lib/ai-schema";
 
 interface FlowCanvasProps {
   slug: string;
@@ -79,15 +84,61 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const [showExport, setShowExport] = useState(false);
   const [showAI, setShowAI] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
-  const [showLayoutPanel, setShowLayoutPanel] = useState(false);
   const [layoutPrefs, setLayoutPrefs] = useState<LayoutPrefs>(DEFAULT_PREFS);
   const layoutPrefsRef = useRef<LayoutPrefs>(layoutPrefs);
   layoutPrefsRef.current = layoutPrefs;
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [ghost, setGhost] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [labelEdit, setLabelEdit] = useState<{ id: string; sx: number; sy: number; value: string } | null>(null);
-  const [viewport, setViewport] = useState({ w: 0, h: 0 });
+  const [viewport, setViewport] = useState({ w: 0, h: 0, left: 0, top: 0 });
+  // Both rails start hidden: most visits to a flowchart are to read it, not to edit it, so
+  // the diagram gets the whole window until you ask for the editing tools. The choice is
+  // remembered, so anyone who does edit keeps their panels open next time.
+  const [showLeft, setShowLeft] = useState(false);
+  const [showRight, setShowRight] = useState(false);
+  // Scroll navigates by default, which is what a trackpad needs and what Figma and draw.io
+  // both do. Anyone driving a wheel mouse who would rather scroll zoom can flip this in the
+  // zoom menu, and the choice sticks.
+  const [zoomOnScroll, setZoomOnScroll] = useState(false);
+  const zoomOnScrollRef = useRef(zoomOnScroll);
+  zoomOnScrollRef.current = zoomOnScroll;
+  // Only persist once the stored preference has been read, so the initial `false` defaults
+  // don't overwrite it before the effect below has had a chance to run.
+  const panelsLoaded = useRef(false);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("flow_panels");
+      if (raw) {
+        const p = JSON.parse(raw);
+        setShowLeft(Boolean(p.left));
+        setShowRight(Boolean(p.right));
+        setZoomOnScroll(Boolean(p.zoomOnScroll));
+      }
+    } catch {}
+    panelsLoaded.current = true;
+  }, []);
+
+  // Persisting in an effect rather than inside the state updater: updaters must be pure.
+  // Writing storage from one meant two toggles in the same batch each read the value the
+  // other hadn't written yet, and the second one's preference was lost.
+  useEffect(() => {
+    if (!panelsLoaded.current) return;
+    try {
+      localStorage.setItem(
+        "flow_panels",
+        JSON.stringify({ left: showLeft, right: showRight, zoomOnScroll })
+      );
+    } catch {}
+  }, [showLeft, showRight, zoomOnScroll]);
+
+  const togglePanel = useCallback((side: "left" | "right") => {
+    if (side === "left") setShowLeft((v) => !v);
+    else setShowRight((v) => !v);
+  }, []);
 
   const cwRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -97,6 +148,56 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const panDragRef = useRef<{ sx: number; sy: number } | null>(null);
   const connectRef = useRef<{ fromId: string; fromPort: Port; startX: number; startY: number } | null>(null);
   const marqueeRef = useRef<{ sx: number; sy: number } | null>(null);
+  // Live marquee rectangle. The mouseup handler used to read the `marquee` state variable
+  // captured in its render closure, so a selection could be committed from a stale rectangle
+  // (or missed entirely if the last mousemove hadn't re-rendered yet).
+  const marqueeBoxRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
+  const wpDragRef = useRef<{
+    connId: string;
+    index: number;
+    created: boolean;
+    start: FlowData;
+    sx: number;
+    sy: number;
+    /** Where the handle sat relative to the pointer when grabbed, so it doesn't jump. */
+    offset: Pt;
+    moved: boolean;
+  } | null>(null);
+  const segDragRef = useRef<{
+    connId: string;
+    index: number;
+    axis: "h" | "v";
+    start: FlowData;
+    /** The route as it was when grabbed — the drag is always measured from this. */
+    baseEdge: ReturnType<typeof computeRoutes>[number];
+    sx: number;
+    sy: number;
+    moved: boolean;
+  } | null>(null);
+  const endDragRef = useRef<{
+    connId: string;
+    end: "from" | "to";
+    start: FlowData;
+    moved: boolean;
+  } | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  /**
+   * True while any pointer gesture is in flight. Routing drops to draft quality for the
+   * duration (see [[RouteOptions.fast]]) and snaps back to a full solve on release, which is
+   * what keeps dragging a node on a large flow at frame rate.
+   */
+  const [interacting, setInteracting] = useState(false);
+  const interactingRef = useRef(false);
+  const beginInteraction = useCallback(() => {
+    if (interactingRef.current) return;
+    interactingRef.current = true;
+    setInteracting(true);
+  }, []);
+  const endInteraction = useCallback(() => {
+    if (!interactingRef.current) return;
+    interactingRef.current = false;
+    setInteracting(false);
+  }, []);
   const spaceRef = useRef(false);
   const histRef = useRef<{ past: FlowData[]; future: FlowData[] }>({ past: [], future: [] });
   const [, setHistVer] = useState(0);
@@ -112,6 +213,15 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [tempTitle, setTempTitle] = useState(title);
   const [tempSubtitle, setTempSubtitle] = useState(subtitle);
+
+  // Any open dialog owns the keyboard. Without this, typing in a modal that hasn't focused
+  // an input yet — or just having one open — still fired canvas shortcuts underneath it,
+  // so "c" scattered comment nodes behind the dialog and Delete removed the selection.
+  const modalOpen =
+    Boolean(editNode) || showHandover || showHelp || showAI || showHistory || askName || isEditingTitle || showCommandPalette;
+  const modalOpenRef = useRef(modalOpen);
+  modalOpenRef.current = modalOpen;
+
 
   useEffect(() => {
     setProjectTitle(title);
@@ -350,17 +460,48 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     };
   }, [viewMode]);
 
+  // Measured sizes for nodes that no longer exist keep the map (and therefore the routing
+  // memo key) growing across a long session; drop them once they're gone.
+  useEffect(() => {
+    setSizes((prev) => {
+      if (prev.size <= data.nodes.length) return prev;
+      const live = new Set(data.nodes.map((n) => n.id));
+      let changed = false;
+      const next = new Map(prev);
+      for (const id of next.keys()) {
+        if (!live.has(id)) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [data.nodes]);
+
   /* ----------------------- viewport size tracking ---------------------- */
   useEffect(() => {
     const update = () => {
       if (cwRef.current) {
         const r = cwRef.current.getBoundingClientRect();
-        setViewport({ w: r.width, h: r.height });
+        setViewport((prev) =>
+          prev.w === r.width && prev.h === r.height && prev.left === r.left && prev.top === r.top
+            ? prev
+            : { w: r.width, h: r.height, left: r.left, top: r.top }
+        );
       }
     };
     update();
+    // The rect is also needed in viewport coordinates, to anchor the floating pathway
+    // toolbar, so scrolling matters as well as resizing.
     window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    const ro = new ResizeObserver(update);
+    if (cwRef.current) ro.observe(cwRef.current);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+      ro.disconnect();
+    };
   }, []);
 
   /* ------------------------------ helpers ------------------------------ */
@@ -368,6 +509,36 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     const r = cwRef.current!.getBoundingClientRect();
     const { pan, zoom } = viewRef.current;
     return { x: (clientX - r.left - pan.x) / zoom, y: (clientY - r.top - pan.y) / zoom };
+  }, []);
+
+  /**
+   * Applies a view change at most once per animation frame.
+   *
+   * A trackpad fires wheel and mousemove events far faster than the screen refreshes — often
+   * 100–200 a second — and the old code ran a full React commit for every one of them, so the
+   * canvas fell behind the fingers and navigation felt like wading. Coalescing into a single
+   * frame means the work done per visible update is constant no matter how chatty the device.
+   */
+  const viewFrame = useRef<number | null>(null);
+  const pendingView = useRef<{ pan: { x: number; y: number }; zoom: number } | null>(null);
+  const commitView = useCallback((next: { pan: { x: number; y: number }; zoom: number }) => {
+    pendingView.current = next;
+    // Keep the ref current immediately, so consecutive gestures within one frame compose
+    // from the latest position rather than all measuring from the frame's starting point.
+    viewRef.current = next;
+    if (viewFrame.current !== null) return;
+    viewFrame.current = requestAnimationFrame(() => {
+      viewFrame.current = null;
+      const v = pendingView.current;
+      pendingView.current = null;
+      if (!v) return;
+      setPan(v.pan);
+      setZoom(v.zoom);
+    });
+  }, []);
+
+  useEffect(() => () => {
+    if (viewFrame.current !== null) cancelAnimationFrame(viewFrame.current);
   }, []);
 
   const computeFit = useCallback(
@@ -378,30 +549,50 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       const r = cwRef.current.getBoundingClientRect();
       const pad = 90;
       const z = Math.min((r.width - pad * 2) / b.w, (r.height - pad * 2) / b.h, 1.6);
-      const nz = Math.max(0.1, Math.min(z, 2));
-      setZoom(nz);
-      setPan({
-        x: r.width / 2 - (b.minX + b.w / 2) * nz,
-        y: r.height / 2 - (b.minY + b.h / 2) * nz,
+      const nz = Math.max(0.05, Math.min(z, 2));
+      commitView({
+        pan: {
+          x: r.width / 2 - (b.minX + b.w / 2) * nz,
+          y: r.height / 2 - (b.minY + b.h / 2) * nz,
+        },
+        zoom: nz,
       });
     },
-    [sizes]
+    [sizes, commitView]
   );
   const fitView = useCallback(() => computeFit(), [computeFit]);
   fitRef.current = fitView;
 
-  const zoomAt = useCallback((factor: number, cx: number, cy: number) => {
-    const { pan, zoom } = viewRef.current;
-    const nz = Math.max(0.1, Math.min(3, zoom * factor));
-    setPan({ x: cx - (cx - pan.x) * (nz / zoom), y: cy - (cy - pan.y) * (nz / zoom) });
-    setZoom(nz);
-  }, []);
+  const zoomAt = useCallback(
+    (factor: number, cx: number, cy: number) => {
+      const { pan, zoom } = viewRef.current;
+      const nz = Math.max(0.05, Math.min(4, zoom * factor));
+      if (nz === zoom) return;
+      commitView({
+        pan: { x: cx - (cx - pan.x) * (nz / zoom), y: cy - (cy - pan.y) * (nz / zoom) },
+        zoom: nz,
+      });
+    },
+    [commitView]
+  );
 
-  const recenterWorld = useCallback((wx: number, wy: number) => {
-    const r = cwRef.current!.getBoundingClientRect();
-    const { zoom } = viewRef.current;
-    setPan({ x: r.width / 2 - wx * zoom, y: r.height / 2 - wy * zoom });
-  }, []);
+  /** Slides the view by a screen-space delta. Used by wheel/trackpad panning. */
+  const panBy = useCallback(
+    (dx: number, dy: number) => {
+      const { pan, zoom } = viewRef.current;
+      commitView({ pan: { x: pan.x - dx, y: pan.y - dy }, zoom });
+    },
+    [commitView]
+  );
+
+  const recenterWorld = useCallback(
+    (wx: number, wy: number) => {
+      const r = cwRef.current!.getBoundingClientRect();
+      const { zoom } = viewRef.current;
+      commitView({ pan: { x: r.width / 2 - wx * zoom, y: r.height / 2 - wy * zoom }, zoom });
+    },
+    [commitView]
+  );
 
   /* ------------------------------ mutations ---------------------------- */
   const addNode = useCallback(
@@ -434,6 +625,65 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       if (openEdit) setEditNode(n);
     },
     [commit, select, snap, uid]
+  );
+
+  const handleQuickAdd = useCallback(
+    (fromId: string, fromPort: Port, targetType: NodeType = "step") => {
+      if (readOnly) return;
+      const sourceNode = dataRef.current.nodes.find((n) => n.id === fromId);
+      if (!sourceNode) return;
+      const s = sizes.get(fromId) || { w: 210, h: 84 };
+      let newX = sourceNode.x;
+      let newY = sourceNode.y;
+      let toPort: Port = "left";
+
+      if (fromPort === "right") {
+        newX = sourceNode.x + s.w + 140;
+        toPort = "left";
+      } else if (fromPort === "left") {
+        newX = sourceNode.x - 240;
+        toPort = "right";
+      } else if (fromPort === "bottom") {
+        newY = sourceNode.y + s.h + 100;
+        toPort = "top";
+      } else if (fromPort === "top") {
+        newY = sourceNode.y - 120;
+        toPort = "bottom";
+      }
+
+      const newNodeId = generateNodeId();
+      const newNode: FlowNode = {
+        id: newNodeId,
+        type: targetType,
+        x: snapVal(newX, snap),
+        y: snapVal(newY, snap),
+        label: targetType === "decision" ? "Next Decision?" : "Next Step",
+        detail: "",
+      };
+
+      const newConn: FlowConnection = {
+        id: newConnId(),
+        from: fromId,
+        to: newNodeId,
+        fromPort,
+        toPort,
+        label: sourceNode.type === "decision" && fromPort === "right" ? "Yes" : sourceNode.type === "decision" && fromPort === "bottom" ? "No" : "",
+        type: sourceNode.type === "decision" && fromPort === "right" ? "cyes" : sourceNode.type === "decision" && fromPort === "bottom" ? "cno" : "",
+      };
+
+      commit(
+        (prev) => ({
+          nodes: [...prev.nodes, newNode],
+          connections: [...prev.connections, newConn],
+        }),
+        [
+          { t: "node.upsert", origin: uid, node: newNode },
+          { t: "conn.upsert", origin: uid, conn: newConn },
+        ]
+      );
+      select([newNodeId]);
+    },
+    [commit, snap, sizes, readOnly, uid, select]
   );
 
   const saveNode = useCallback(
@@ -531,13 +781,15 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
 
   const runAutoLayout = useCallback(() => {
     const laid = autoLayout(dataRef.current.nodes, dataRef.current.connections, sizes, layoutPrefsRef.current);
-    // Drop hand-set ports so each pathway picks the natural side for the NEW layout
-    // (stale fromPort/toPort from the old arrangement cause awkward jogs otherwise).
+    // Drop hand-set ports AND hand-drawn routes so each pathway picks the natural side and
+    // shape for the NEW layout. Waypoints are absolute world positions, so after every node
+    // has moved they would drag pathways back across the fresh arrangement.
     const conns = dataRef.current.connections.map((c) => {
-      if (c.fromPort === undefined && c.toPort === undefined) return c;
-      const { fromPort, toPort, ...rest } = c;
+      if (c.fromPort === undefined && c.toPort === undefined && c.waypoints === undefined) return c;
+      const { fromPort, toPort, waypoints, ...rest } = c;
       void fromPort;
       void toPort;
+      void waypoints;
       return rest;
     });
     commit(() => ({ nodes: laid, connections: conns }), [
@@ -555,6 +807,58 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     ]);
     setTimeout(() => fitView(), 60);
   }, [commit, sizes, uid, fitView]);
+
+  const chainSelectedNodes = useCallback(() => {
+    if (readOnly || selRef.current.length < 2) return;
+    const selNodes = dataRef.current.nodes.filter((n) => selRef.current.includes(n.id));
+    const sorted = [...selNodes].sort((a, b) => (layoutPrefsRef.current.direction === "TB" ? a.y - b.y : a.x - b.x));
+    const newConns: FlowConnection[] = [];
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const fromId = sorted[i].id;
+      const toId = sorted[i + 1].id;
+      const exists = dataRef.current.connections.some((c) => c.from === fromId && c.to === toId);
+      if (!exists) {
+        newConns.push({
+          id: newConnId(),
+          from: fromId,
+          to: toId,
+          label: sorted[i].type === "decision" ? "Yes" : "",
+          type: sorted[i].type === "decision" ? "cyes" : "",
+        });
+      }
+    }
+    if (newConns.length > 0) {
+      commit(
+        (prev) => ({ ...prev, connections: [...prev.connections, ...newConns] }),
+        newConns.map((c) => ({ t: "conn.upsert", origin: uid, conn: c }))
+      );
+    }
+  }, [commit, readOnly, uid]);
+
+  const autoConnectAllNodes = useCallback(() => {
+    if (readOnly || dataRef.current.nodes.length < 2) return;
+    const sorted = [...dataRef.current.nodes].sort((a, b) => (layoutPrefsRef.current.direction === "TB" ? a.y - b.y : a.x - b.x));
+    const newConns: FlowConnection[] = [];
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const fromId = sorted[i].id;
+      const toId = sorted[i + 1].id;
+      const exists = dataRef.current.connections.some((c) => c.from === fromId && c.to === toId);
+      if (!exists) {
+        newConns.push({
+          id: newConnId(),
+          from: fromId,
+          to: toId,
+          label: sorted[i].type === "decision" ? "Yes" : "",
+          type: sorted[i].type === "decision" ? "cyes" : "",
+        });
+      }
+    }
+    commit(
+      (prev) => ({ ...prev, connections: [...prev.connections, ...newConns] }),
+      newConns.map((c) => ({ t: "conn.upsert", origin: uid, conn: c }))
+    );
+    setTimeout(() => runAutoLayout(), 80);
+  }, [commit, readOnly, uid, runAutoLayout]);
 
   const nudge = useCallback(
     (dx: number, dy: number) => {
@@ -619,12 +923,116 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     [commit, bc, uid]
   );
 
+  /* ---------------------------- pathway routes ------------------------- */
+  // Solved once here rather than inside <Connections>, so the floating pathway toolbar can
+  // anchor itself to the same geometry the SVG draws. Memoised on exactly the three inputs
+  // routing reads — a node drag re-renders every frame, and re-solving every route (each of
+  // which may run an A* search) on each of those frames was the main source of drag lag.
+  const routes = useMemo(
+    () => computeRoutes(data.nodes, data.connections, sizes, { fast: interacting }),
+    [data.nodes, data.connections, sizes, interacting]
+  );
+  const routeById = useMemo(() => new Map(routes.map((r) => [r.id, r])), [routes]);
+
+  /** Replaces a pathway's hand-drawn route. `undefined` hands it back to the auto-router. */
+  const setWaypoints = useCallback(
+    (id: string, waypoints: Pt[] | undefined) => {
+      commit(
+        (prev) => ({
+          ...prev,
+          connections: prev.connections.map((c) =>
+            connId(c) === id ? { ...c, waypoints: waypoints?.length ? waypoints : undefined } : c
+          ),
+        }),
+        [{ t: "conn.waypoints", origin: uid, id, waypoints: waypoints?.length ? waypoints : undefined }]
+      );
+    },
+    [commit, uid]
+  );
+
+  const removeWaypoint = useCallback(
+    (id: string, index: number) => {
+      const c = dataRef.current.connections.find((x) => connId(x) === id);
+      if (!c?.waypoints) return;
+      setWaypoints(
+        id,
+        c.waypoints.filter((_, i) => i !== index)
+      );
+    },
+    [setWaypoints]
+  );
+
   /* ------------------------- window mouse events ----------------------- */
   const handlersRef = useRef<{ move: (e: MouseEvent) => void; up: (e: MouseEvent) => void }>({
     move: () => {},
     up: () => {},
   });
   handlersRef.current.move = (e: MouseEvent) => {
+    if (segDragRef.current) {
+      const sg = segDragRef.current;
+      const { zoom } = viewRef.current;
+      const raw = sg.axis === "h" ? (e.clientY - sg.sy) / zoom : (e.clientX - sg.sx) / zoom;
+      if (!sg.moved && Math.abs(raw) > 2) sg.moved = true;
+      if (!sg.moved) return;
+      // Snap the moved run onto the grid rather than snapping the raw delta, so the segment
+      // lands on grid lines instead of drifting by grid-sized steps from wherever it began.
+      const anchor = sg.axis === "h" ? sg.baseEdge.pts[sg.index].y : sg.baseEdge.pts[sg.index].x;
+      const delta = snapVal(anchor + raw, snap) - anchor;
+      const wps = waypointsAfterSegmentDrag(sg.baseEdge, sg.index, sg.axis, delta);
+      setTransient((prev) => ({
+        ...prev,
+        connections: prev.connections.map((c) => (connId(c) === sg.connId ? { ...c, waypoints: wps } : c)),
+      }));
+      const now = Date.now();
+      if (now - lastMoveBcast.current > 55) {
+        lastMoveBcast.current = now;
+        bc({ t: "conn.waypoints", origin: uid, id: sg.connId, waypoints: wps });
+      }
+      return;
+    }
+    if (endDragRef.current) {
+      const ed = endDragRef.current;
+      ed.moved = true;
+      const w = screenToWorld(e.clientX, e.clientY);
+      const anchorNode = dataRef.current.nodes.find(
+        (n) => n.id === (ed.end === "from" ? dataRef.current.connections.find((c) => connId(c) === ed.connId)?.to : dataRef.current.connections.find((c) => connId(c) === ed.connId)?.from)
+      );
+      const asz = anchorNode ? sizes.get(anchorNode.id) || { w: 210, h: 84 } : null;
+      setGhost({
+        x1: anchorNode && asz ? anchorNode.x + asz.w / 2 : w.x,
+        y1: anchorNode && asz ? anchorNode.y + asz.h / 2 : w.y,
+        x2: w.x,
+        y2: w.y,
+      });
+      // Highlight whatever shape is under the pointer so the drop target is obvious.
+      const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+      const nodeEl = el?.closest("[data-node-id]") as HTMLElement | null;
+      setDropTarget(nodeEl?.dataset.nodeId ?? null);
+      return;
+    }
+    if (wpDragRef.current) {
+      const w = wpDragRef.current;
+      const world = screenToWorld(e.clientX, e.clientY);
+      if (!w.moved && Math.hypot(e.clientX - w.sx, e.clientY - w.sy) > 2) w.moved = true;
+      if (!w.moved) return;
+      const pt = { x: snapVal(world.x + w.offset.x, snap), y: snapVal(world.y + w.offset.y, snap) };
+      setTransient((prev) => ({
+        ...prev,
+        connections: prev.connections.map((c) => {
+          if (connId(c) !== w.connId) return c;
+          const wps = [...(c.waypoints ?? [])];
+          wps[w.index] = pt;
+          return { ...c, waypoints: wps };
+        }),
+      }));
+      const now = Date.now();
+      if (now - lastMoveBcast.current > 55) {
+        lastMoveBcast.current = now;
+        const c = dataRef.current.connections.find((x) => connId(x) === w.connId);
+        if (c) bc({ t: "conn.waypoints", origin: uid, id: w.connId, waypoints: c.waypoints });
+      }
+      return;
+    }
     if (dragRef.current) {
       const d = dragRef.current;
       const { zoom } = viewRef.current;
@@ -652,7 +1060,10 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       return;
     }
     if (panDragRef.current) {
-      setPan({ x: e.clientX - panDragRef.current.sx, y: e.clientY - panDragRef.current.sy });
+      commitView({
+        pan: { x: e.clientX - panDragRef.current.sx, y: e.clientY - panDragRef.current.sy },
+        zoom: viewRef.current.zoom,
+      });
       return;
     }
     if (connectRef.current) {
@@ -663,10 +1074,70 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     if (marqueeRef.current) {
       const s = screenToWorld(marqueeRef.current.sx, marqueeRef.current.sy);
       const c = screenToWorld(e.clientX, e.clientY);
-      setMarquee({ x: Math.min(s.x, c.x), y: Math.min(s.y, c.y), w: Math.abs(c.x - s.x), h: Math.abs(c.y - s.y) });
+      const box = { x: Math.min(s.x, c.x), y: Math.min(s.y, c.y), w: Math.abs(c.x - s.x), h: Math.abs(c.y - s.y) };
+      marqueeBoxRef.current = box;
+      setMarquee(box);
     }
   };
   handlersRef.current.up = (e: MouseEvent) => {
+    // Whatever the gesture was, it's over: go back to full-quality routing.
+    endInteraction();
+    if (segDragRef.current) {
+      const sg = segDragRef.current;
+      segDragRef.current = null;
+      if (sg.moved) {
+        record(sg.start);
+        scheduleSave();
+        const c = dataRef.current.connections.find((x) => connId(x) === sg.connId);
+        if (c) bc({ t: "conn.waypoints", origin: uid, id: sg.connId, waypoints: c.waypoints });
+      }
+      return;
+    }
+    if (endDragRef.current) {
+      const ed = endDragRef.current;
+      endDragRef.current = null;
+      setGhost(null);
+      setDropTarget(null);
+      const el = e.target as HTMLElement | null;
+      const portEl = el?.closest?.("[data-port]") as HTMLElement | null;
+      const nodeEl = el?.closest?.("[data-node-id]") as HTMLElement | null;
+      const targetId = portEl?.dataset.node || nodeEl?.dataset.nodeId;
+      const c = dataRef.current.connections.find((x) => connId(x) === ed.connId);
+      if (!c || !targetId || !ed.moved) return;
+      const other = ed.end === "from" ? c.to : c.from;
+      if (targetId === other) return; // would collapse into a self-loop
+      const port = (portEl?.dataset.port as Port) || undefined;
+      const updated: FlowConnection =
+        ed.end === "from"
+          ? { ...c, from: targetId, fromPort: port, waypoints: undefined }
+          : { ...c, to: targetId, toPort: port, waypoints: undefined };
+      commit(
+        (prev) => ({
+          ...prev,
+          connections: prev.connections.map((x) => (connId(x) === ed.connId ? updated : x)),
+        }),
+        [{ t: "conn.upsert", origin: uid, conn: updated }]
+      );
+      return;
+    }
+    if (wpDragRef.current) {
+      const w = wpDragRef.current;
+      wpDragRef.current = null;
+      if (w.moved) {
+        // One history entry per drag, recorded against the document as it was before the
+        // handle was grabbed — same shape as the node drag below.
+        record(w.start);
+        scheduleSave();
+        const c = dataRef.current.connections.find((x) => connId(x) === w.connId);
+        if (c) bc({ t: "conn.waypoints", origin: uid, id: w.connId, waypoints: c.waypoints });
+      } else if (w.created) {
+        // A click on a "add a bend here" handle that never moved shouldn't leave a bend
+        // behind — put the document back exactly as it was.
+        dataRef.current = w.start;
+        setData(w.start);
+      }
+      return;
+    }
     if (dragRef.current) {
       const d = dragRef.current;
       if (d.moved) {
@@ -686,10 +1157,15 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       const portEl = el.closest("[data-port]") as HTMLElement | null;
       const nodeEl = el.closest("[data-node-id]") as HTMLElement | null;
       const targetId = portEl?.dataset.node || nodeEl?.dataset.nodeId;
-      if (targetId && targetId !== connectRef.current.fromId) {
+      const fromId = connectRef.current.fromId;
+      // Guard against the two ways this used to produce junk: dropping a pathway back onto
+      // its own node (a self-loop the router can't draw), and dropping onto a node that is
+      // already connected the same way, which silently stacked a second identical arrow.
+      const duplicate = dataRef.current.connections.some((c) => c.from === fromId && c.to === targetId);
+      if (targetId && targetId !== fromId && !duplicate) {
         const conn: FlowConnection = {
           id: newConnId(),
-          from: connectRef.current.fromId,
+          from: fromId,
           to: targetId,
           label: "",
           type: "",
@@ -699,13 +1175,15 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         commit((prev) => ({ ...prev, connections: [...prev.connections, conn] }), [
           { t: "conn.upsert", origin: uid, conn },
         ]);
+        selectConn(connId(conn));
       }
       connectRef.current = null;
       setGhost(null);
     }
     if (marqueeRef.current) {
-      const m = marquee;
+      const m = marqueeBoxRef.current;
       marqueeRef.current = null;
+      marqueeBoxRef.current = null;
       setMarquee(null);
       if (m && (m.w > 4 || m.h > 4)) {
         const hits = dataRef.current.nodes
@@ -719,36 +1197,146 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     }
   };
   useEffect(() => {
-    const mv = (e: MouseEvent) => handlersRef.current.move(e);
-    const up = (e: MouseEvent) => handlersRef.current.up(e);
+    // Pointer moves are coalesced to one per animation frame. A trackpad emits them far
+    // faster than the display refreshes, and every extra one used to cost a full React
+    // commit plus a re-solve of every pathway — work that was overwritten milliseconds
+    // later without ever being seen.
+    let frame: number | null = null;
+    let queued: MouseEvent | null = null;
+    const flush = () => {
+      frame = null;
+      const ev = queued;
+      queued = null;
+      if (ev) handlersRef.current.move(ev);
+    };
+    const mv = (e: MouseEvent) => {
+      queued = e;
+      if (frame === null) frame = requestAnimationFrame(flush);
+    };
+    const up = (e: MouseEvent) => {
+      // Apply whatever move is still queued before finishing, so the gesture ends exactly
+      // where the pointer did rather than up to a frame behind it.
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+        flush();
+      }
+      handlersRef.current.up(e);
+    };
+    // Releasing the button outside the window (or alt-tabbing mid-drag) never delivered a
+    // mouseup, so the canvas stayed stuck in "dragging" and the next click teleported the
+    // selection. Treat losing the window as the end of whatever gesture was in flight.
+    const cancel = () => {
+      if (
+        dragRef.current ||
+        panDragRef.current ||
+        connectRef.current ||
+        marqueeRef.current ||
+        wpDragRef.current ||
+        segDragRef.current ||
+        endDragRef.current
+      ) {
+        handlersRef.current.up(new MouseEvent("mouseup"));
+      }
+      dragRef.current = null;
+      panDragRef.current = null;
+      connectRef.current = null;
+      marqueeRef.current = null;
+      wpDragRef.current = null;
+      segDragRef.current = null;
+      endDragRef.current = null;
+      setDropTarget(null);
+      endInteraction();
+      spaceRef.current = false;
+      setGhost(null);
+      setMarquee(null);
+    };
     window.addEventListener("mousemove", mv);
     window.addEventListener("mouseup", up);
+    window.addEventListener("blur", cancel);
     return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
       window.removeEventListener("mousemove", mv);
       window.removeEventListener("mouseup", up);
+      window.removeEventListener("blur", cancel);
     };
   }, []);
 
-  /* ------------------------------- wheel ------------------------------- */
+  /* --------------------------- wheel / trackpad ------------------------ */
   useEffect(() => {
     const cw = cwRef.current;
     if (!cw) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const r = cw.getBoundingClientRect();
-      // Normalize delta across mouse wheels (line units) and trackpads (pixel units)
-      // so both feel consistent.
-      let dy = e.deltaY;
-      if (e.deltaMode === 1) dy *= 16; // lines → ~pixels
-      else if (e.deltaMode === 2) dy *= r.height; // pages → ~pixels
-      // Continuous exponential zoom: small trackpad deltas nudge gently, while a
-      // mouse notch still steps a sensible amount. Per-event factor is clamped so a
-      // fast flick can't jump the view.
-      const factor = Math.min(1.22, Math.max(0.82, Math.exp(-dy * 0.0012)));
-      zoomAt(factor, e.clientX - r.left, e.clientY - r.top);
+
+      // Normalise across devices: mouse wheels report lines, trackpads report pixels.
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? r.height : 1;
+      let dx = e.deltaX * unit;
+      let dy = e.deltaY * unit;
+
+      // A trackpad pinch reaches the page as a wheel event with ctrlKey set — the browser
+      // synthesises it, no modifier is actually held. Ctrl/⌘ + wheel means the same thing.
+      const wantsZoom = e.ctrlKey || e.metaKey || (zoomOnScrollRef.current && !e.shiftKey);
+
+      if (wantsZoom) {
+        // Continuous exponential zoom, clamped per event so one fast flick can't jump the
+        // view across the diagram. Pinch deltas are small, so they scale up gently.
+        const factor = Math.min(1.25, Math.max(0.8, Math.exp(-dy * 0.0022)));
+        zoomAt(factor, e.clientX - r.left, e.clientY - r.top);
+        return;
+      }
+
+      // Otherwise scroll navigates, as it does in Figma and draw.io: two fingers move the
+      // canvas. Shift makes a vertical-only wheel scroll sideways, for mice with no X axis.
+      if (e.shiftKey && dx === 0) {
+        dx = dy;
+        dy = 0;
+      }
+      panBy(dx, dy);
     };
     cw.addEventListener("wheel", onWheel, { passive: false });
     return () => cw.removeEventListener("wheel", onWheel);
+  }, [zoomAt, panBy]);
+
+  /* ------------------------- pinch (touch / pen) ----------------------- */
+  // Two-finger pinch on a touchscreen or a hybrid laptop, which sends touch events rather
+  // than ctrl-wheel. Without this the canvas could only be zoomed from the toolbar there.
+  useEffect(() => {
+    const cw = cwRef.current;
+    if (!cw) return;
+    let base: { dist: number; zoom: number; cx: number; cy: number } | null = null;
+    const spread = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return;
+      const r = cw.getBoundingClientRect();
+      base = {
+        dist: spread(e.touches),
+        zoom: viewRef.current.zoom,
+        cx: (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left,
+        cy: (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top,
+      };
+    };
+    const onMove = (e: TouchEvent) => {
+      if (!base || e.touches.length !== 2) return;
+      e.preventDefault();
+      const scale = spread(e.touches) / (base.dist || 1);
+      const target = Math.max(0.05, Math.min(4, base.zoom * scale));
+      zoomAt(target / viewRef.current.zoom, base.cx, base.cy);
+    };
+    const onEnd = () => {
+      base = null;
+    };
+    cw.addEventListener("touchstart", onStart, { passive: true });
+    cw.addEventListener("touchmove", onMove, { passive: false });
+    cw.addEventListener("touchend", onEnd);
+    cw.addEventListener("touchcancel", onEnd);
+    return () => {
+      cw.removeEventListener("touchstart", onStart);
+      cw.removeEventListener("touchmove", onMove);
+      cw.removeEventListener("touchend", onEnd);
+      cw.removeEventListener("touchcancel", onEnd);
+    };
   }, [zoomAt]);
 
   /* ----------------------------- keyboard ------------------------------ */
@@ -763,7 +1351,26 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     const mod = e.ctrlKey || e.metaKey;
     const k = e.key.toLowerCase();
 
+    // A dialog owns the keyboard while it's open — canvas shortcuts stay out of the way.
+    // Escape still gets through, because it's the only way to dismiss most of the dialogs.
+    if (modalOpenRef.current) {
+      if (k === "escape") {
+        e.preventDefault();
+        if (isEditingTitle) setIsEditingTitle(false);
+        else if (showHelp) setShowHelp(false);
+        else if (showHistory) setShowHistory(false);
+        else if (showAI) setShowAI(false);
+        else if (showHandover) setShowHandover(false);
+        else if (editNode) setEditNode(null);
+        // The name prompt is only dismissible once the person actually has a name.
+        else if (askName && user) setAskName(false);
+      }
+      return;
+    }
+
     if (k === " ") {
+      // Without this the page tries to scroll while you hold space to pan.
+      e.preventDefault();
       spaceRef.current = true;
       return;
     }
@@ -824,7 +1431,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     }
     if (mod && k === "0") {
       e.preventDefault();
-      setZoom(1);
+      const r = cwRef.current!.getBoundingClientRect();
+      zoomAt(1 / viewRef.current.zoom, r.width / 2, r.height / 2);
       return;
     }
     if (e.shiftKey && k === "!") {
@@ -836,10 +1444,29 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       computeFit(sel);
       return;
     } // Shift+2
+    if (mod && k === "k") {
+      e.preventDefault();
+      setShowCommandPalette((prev) => !prev);
+      return;
+    }
+    if (k === "[" && !mod && selRef.current.length === 1) {
+      e.preventDefault();
+      const curId = selRef.current[0];
+      const incoming = dataRef.current.connections.find((c) => c.to === curId);
+      if (incoming) select([incoming.from]);
+      return;
+    }
+    if (k === "]" && !mod && selRef.current.length === 1) {
+      e.preventDefault();
+      const curId = selRef.current[0];
+      const outgoing = dataRef.current.connections.find((c) => c.from === curId);
+      if (outgoing) select([outgoing.to]);
+      return;
+    }
     if (k === "v" && !mod) setTool("select");
     if (k === "h" && !mod) setTool("pan");
     if (k === "g" && !mod) setSnap((s) => !s);
-    if (k === "c" && !mod) addNode("note");
+    if (k === "c" && !mod && !readOnly) addNode("note");
     if ((k === "?" || k === "/") && !mod) {
       setShowHelp((s) => !s);
       return;
@@ -896,12 +1523,14 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     if (!isBg) return;
     if (tool === "pan" || spaceRef.current || e.button === 1) {
       panDragRef.current = { sx: e.clientX - pan.x, sy: e.clientY - pan.y };
+      beginInteraction();
     } else {
       if (!e.shiftKey) {
         select([]);
         selectConn(null);
       }
       marqueeRef.current = { sx: e.clientX, sy: e.clientY };
+      beginInteraction();
     }
   };
 
@@ -927,15 +1556,49 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     } else {
       ids = selRef.current.includes(node.id) ? selRef.current : [node.id];
     }
+    // Alt+drag leaves the originals in place and drags a fresh copy, the way every design
+    // tool does it — much quicker than duplicate-then-reposition for laying out variants.
+    const start = dataRef.current;
+    if (e.altKey) {
+      const src = start.nodes.filter((n) => ids.includes(n.id));
+      if (src.length) {
+        const idMap = new Map<string, string>();
+        const copies = src.map((n) => {
+          const nid = generateNodeId();
+          idMap.set(n.id, nid);
+          return { ...n, id: nid };
+        });
+        const inSel = new Set(ids);
+        const copiedConns = start.connections
+          .filter((c) => inSel.has(c.from) && inSel.has(c.to))
+          .map((c) => ({ ...c, id: newConnId(), from: idMap.get(c.from)!, to: idMap.get(c.to)!, waypoints: undefined }));
+        commit(
+          (prev) => ({ nodes: [...prev.nodes, ...copies], connections: [...prev.connections, ...copiedConns] }),
+          [
+            ...copies.map((n) => ({ t: "node.upsert" as const, origin: uid, node: n })),
+            ...copiedConns.map((c) => ({ t: "conn.upsert" as const, origin: uid, conn: c })),
+          ]
+        );
+        const copyIds = copies.map((n) => n.id);
+        select(copyIds);
+        selectConn(null);
+        const org = new Map(copies.map((n) => [n.id, { x: n.x, y: n.y }]));
+        dragRef.current = { sx: e.clientX, sy: e.clientY, origins: org, start, moved: false };
+        beginInteraction();
+        return;
+      }
+    }
+
     select(ids);
     selectConn(null);
     const origins = new Map<string, { x: number; y: number }>();
     ids.forEach((id) => {
-      const n = dataRef.current.nodes.find((x) => x.id === id);
+      const n = start.nodes.find((x) => x.id === id);
       if (n) origins.set(id, { x: n.x, y: n.y });
     });
     if (!origins.has(node.id)) origins.set(node.id, { x: node.x, y: node.y });
-    dragRef.current = { sx: e.clientX, sy: e.clientY, origins, start: dataRef.current, moved: false };
+    dragRef.current = { sx: e.clientX, sy: e.clientY, origins, start, moved: false };
+    beginInteraction();
   };
 
   const onPortMouseDown = (e: React.MouseEvent, node: FlowNode, port: string) => {
@@ -951,7 +1614,83 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         : { x: node.x + s.w, y: node.y + s.h / 2 };
     connectRef.current = { fromId: node.id, fromPort: port as Port, startX: pos.x, startY: pos.y };
     setGhost({ x1: pos.x, y1: pos.y, x2: pos.x, y2: pos.y });
+    beginInteraction();
   };
+
+  /**
+   * Grabs a route handle. A solid handle moves an existing bend; a hollow one inserts a new
+   * bend at that spot, which is how a pathway gets pulled off a collision course by hand.
+   */
+  const onWaypointDown = useCallback(
+    (e: React.MouseEvent, h: WaypointDragStart) => {
+      if (readOnly) return;
+      const start = dataRef.current;
+      const conn = start.connections.find((x) => connId(x) === h.connId);
+      if (!conn) return;
+
+      let index = h.index;
+      if (h.kind === "ghost") {
+        const wps = [...(conn.waypoints ?? [])];
+        index = Math.max(0, Math.min(index, wps.length));
+        wps.splice(index, 0, { x: h.x, y: h.y });
+        const next = {
+          ...start,
+          connections: start.connections.map((x) => (connId(x) === h.connId ? { ...x, waypoints: wps } : x)),
+        };
+        dataRef.current = next;
+        setData(next);
+      }
+
+      const w0 = screenToWorld(e.clientX, e.clientY);
+      wpDragRef.current = {
+        connId: h.connId,
+        index,
+        created: h.kind === "ghost",
+        start,
+        sx: e.clientX,
+        sy: e.clientY,
+        offset: { x: h.x - w0.x, y: h.y - w0.y },
+        moved: false,
+      };
+      beginInteraction();
+    },
+    [readOnly, screenToWorld, beginInteraction]
+  );
+
+  /**
+   * Grabs a straight run of a pathway. Dragging slides the whole run sideways, which is the
+   * fastest way to pull a pathway out of a collision without placing individual bends.
+   */
+  const onSegmentDown = useCallback(
+    (e: React.MouseEvent, sgd: SegmentDragStart) => {
+      if (readOnly) return;
+      const baseEdge = routeById.get(sgd.connId);
+      if (!baseEdge) return;
+      segDragRef.current = {
+        connId: sgd.connId,
+        index: sgd.index,
+        axis: sgd.axis,
+        start: dataRef.current,
+        baseEdge,
+        sx: e.clientX,
+        sy: e.clientY,
+        moved: false,
+      };
+      beginInteraction();
+    },
+    [readOnly, routeById, beginInteraction]
+  );
+
+  /** Grabs one end of a pathway so it can be dropped on a different shape. */
+  const onEndpointDown = useCallback(
+    (e: React.MouseEvent, ed: EndpointDragStart) => {
+      if (readOnly) return;
+      endDragRef.current = { connId: ed.connId, end: ed.end, start: dataRef.current, moved: false };
+      setGhost({ x1: ed.x, y1: ed.y, x2: ed.x, y2: ed.y });
+      beginInteraction();
+    },
+    [readOnly, beginInteraction]
+  );
 
   const openLabelEdit = useCallback(
     (id: string) => {
@@ -969,6 +1708,137 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       setLabelEdit({ id, sx: r.left + mx * zoom + pan.x, sy: r.top + my * zoom + pan.y, value: c.label || "" });
     },
     [sizes]
+  );
+
+  /** Applies a patch to every selected node in one undo step. */
+  const patchSelectedNodes = useCallback(
+    (patch: Partial<FlowNode>) => {
+      const ids = new Set(selRef.current);
+      if (!ids.size) return;
+      const ops: Op[] = [];
+      commit(
+        (prev) => ({
+          ...prev,
+          nodes: prev.nodes.map((n) => {
+            if (!ids.has(n.id)) return n;
+            const updated = { ...n, ...patch };
+            // `undefined` in a patch means "clear this property", not "leave it".
+            for (const k of Object.keys(patch) as (keyof FlowNode)[]) {
+              if (patch[k] === undefined) delete updated[k];
+            }
+            ops.push({ t: "node.upsert", origin: uid, node: updated });
+            return updated;
+          }),
+        }),
+        ops
+      );
+    },
+    [commit, uid]
+  );
+
+  const batchSetActor = useCallback(
+    (actor: Actor) => {
+      if (readOnly) return;
+      patchSelectedNodes({ actor });
+    },
+    [readOnly, patchSelectedNodes]
+  );
+
+  const renameNode = useCallback(
+    (id: string, label: string) => {
+      const n = dataRef.current.nodes.find((x) => x.id === id);
+      if (!n) return;
+      const updated = { ...n, label };
+      commit(
+        (prev) => ({ ...prev, nodes: prev.nodes.map((x) => (x.id === id ? updated : x)) }),
+        [{ t: "node.upsert", origin: uid, node: updated }]
+      );
+    },
+    [commit, uid]
+  );
+
+  /** Scrolls the viewport to a node and selects it (used by the layers rail). */
+  const focusNode = useCallback(
+    (id: string) => {
+      const n = dataRef.current.nodes.find((x) => x.id === id);
+      if (!n) return;
+      const sz = sizes.get(id) || { w: 210, h: 84 };
+      recenterWorld(n.x + sz.w / 2, n.y + sz.h / 2);
+      select([id]);
+    },
+    [sizes, recenterWorld, select]
+  );
+
+  /**
+   * Align / distribute the selection, the way a design tool does. Nodes are different sizes,
+   * so aligning works on the relevant edge or centre of each node's real measured box rather
+   * than on its x/y origin.
+   */
+  const alignNodes = useCallback(
+    (kind: AlignKind) => {
+      const ids = selRef.current;
+      if (ids.length < 2) return;
+      const set = new Set(ids);
+      const items = dataRef.current.nodes
+        .filter((n) => set.has(n.id))
+        .map((n) => ({ n, s: sizes.get(n.id) || { w: 210, h: 84 } }));
+
+      const moves = new Map<string, { x: number; y: number }>();
+      const put = (id: string, x: number, y: number) => moves.set(id, { x: Math.round(x), y: Math.round(y) });
+
+      if (kind === "left") {
+        const v = Math.min(...items.map((i) => i.n.x));
+        items.forEach((i) => put(i.n.id, v, i.n.y));
+      } else if (kind === "right") {
+        const v = Math.max(...items.map((i) => i.n.x + i.s.w));
+        items.forEach((i) => put(i.n.id, v - i.s.w, i.n.y));
+      } else if (kind === "hcenter") {
+        const v = items.reduce((a, i) => a + i.n.x + i.s.w / 2, 0) / items.length;
+        items.forEach((i) => put(i.n.id, v - i.s.w / 2, i.n.y));
+      } else if (kind === "top") {
+        const v = Math.min(...items.map((i) => i.n.y));
+        items.forEach((i) => put(i.n.id, i.n.x, v));
+      } else if (kind === "bottom") {
+        const v = Math.max(...items.map((i) => i.n.y + i.s.h));
+        items.forEach((i) => put(i.n.id, i.n.x, v - i.s.h));
+      } else if (kind === "vcenter") {
+        const v = items.reduce((a, i) => a + i.n.y + i.s.h / 2, 0) / items.length;
+        items.forEach((i) => put(i.n.id, i.n.x, v - i.s.h / 2));
+      } else if (kind === "hdist" || kind === "vdist") {
+        const horiz = kind === "hdist";
+        const sorted = [...items].sort((a, b) =>
+          horiz ? a.n.x + a.s.w / 2 - (b.n.x + b.s.w / 2) : a.n.y + a.s.h / 2 - (b.n.y + b.s.h / 2)
+        );
+        // Keep the two outermost nodes where they are and spread the gaps between the rest
+        // evenly, so distributing never drags the whole group across the canvas.
+        const first = sorted[0];
+        const last = sorted[sorted.length - 1];
+        const startEdge = horiz ? first.n.x + first.s.w : first.n.y + first.s.h;
+        const endEdge = horiz ? last.n.x : last.n.y;
+        const inner = sorted.slice(1, -1);
+        const occupied = inner.reduce((a, i) => a + (horiz ? i.s.w : i.s.h), 0);
+        const gap = (endEdge - startEdge - occupied) / (inner.length + 1);
+        let cursor = startEdge + gap;
+        for (const i of inner) {
+          if (horiz) put(i.n.id, cursor, i.n.y);
+          else put(i.n.id, i.n.x, cursor);
+          cursor += (horiz ? i.s.w : i.s.h) + gap;
+        }
+      }
+
+      if (!moves.size) return;
+      commit(
+        (prev) => ({
+          ...prev,
+          nodes: prev.nodes.map((n) => {
+            const m = moves.get(n.id);
+            return m ? { ...n, x: m.x, y: m.y } : n;
+          }),
+        }),
+        [{ t: "nodes.move", origin: uid, moves: [...moves].map(([id, m]) => ({ id, ...m })) }]
+      );
+    },
+    [commit, sizes, uid]
   );
 
   /* ---------------------------- context menus -------------------------- */
@@ -1016,9 +1886,9 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     [commit, uid]
   );
 
-  const handleSaveTitle = async () => {
-    const t = tempTitle.trim() || "Process Flowchart";
-    const s = tempSubtitle.trim();
+  const handleSaveTitle = async (nextTitle?: string, nextSubtitle?: string) => {
+    const t = (nextTitle ?? tempTitle).trim() || "Process Flowchart";
+    const s = (nextSubtitle ?? tempSubtitle).trim();
     setProjectTitle(t);
     setProjectSubtitle(s);
     setIsEditingTitle(false);
@@ -1105,6 +1975,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       ["No (red)", "cno"],
       ["Conditional (amber)", "camber"],
     ];
+    const hasRoute = Boolean(conn?.waypoints?.length);
     setCtxMenu({
       x: e.clientX,
       y: e.clientY,
@@ -1118,6 +1989,11 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         { separator: true },
         { header: "Pathway Style" },
         ...styles.map(([label, type]) => ({ label: `Style: ${label}`, action: () => setConnField(id, { type }) })),
+        { separator: true },
+        { header: "Route" },
+        ...(hasRoute
+          ? [{ label: "Reset to automatic route", action: () => setWaypoints(id, undefined) }]
+          : [{ label: "Drag the dots on a selected pathway to bend it" }]),
         { separator: true },
         { label: "Delete Connection", action: () => deleteConn(id), danger: true },
       ],
@@ -1173,23 +2049,47 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     URL.revokeObjectURL(url);
   };
 
+  const loadParsedJSON = useCallback(
+    (content: string) => {
+      try {
+        const parsed = JSON.parse(content);
+        if (Array.isArray(parsed.nodes)) {
+          const nodes = parsed.nodes as FlowNode[];
+          let connections = (parsed.connections || []) as FlowConnection[];
+          if (connections.length === 0 && nodes.length > 1) {
+            const sorted = [...nodes].sort((a, b) => a.y - b.y || a.x - b.x);
+            connections = sorted.slice(0, -1).map((src, i) => ({
+              id: `c_${i}_${Date.now()}`,
+              from: src.id,
+              to: sorted[i + 1].id,
+              label: src.type === "decision" ? "Yes" : "",
+              type: src.type === "decision" ? "cyes" : "",
+            }));
+          }
+          snapshotNow("Before file import");
+          commit(() => ({ nodes, connections }), [{ t: "doc.replace", origin: uid, nodes, connections }]);
+          setTimeout(() => {
+            const laid = autoLayout(dataRef.current.nodes, dataRef.current.connections, sizes, layoutPrefsRef.current);
+            commit((prev) => ({ ...prev, nodes: laid }), [
+              { t: "doc.replace", origin: uid, nodes: laid, connections: dataRef.current.connections },
+            ]);
+            setTimeout(() => fitView(), 80);
+          }, 150);
+        } else {
+          alert("Invalid flowchart JSON format.");
+        }
+      } catch {
+        alert("Failed to parse flowchart JSON file.");
+      }
+    },
+    [commit, fitView, layoutPrefs, sizes, snapshotNow, uid]
+  );
+
   const handleImportJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const parsed = JSON.parse(evt.target?.result as string);
-        if (Array.isArray(parsed.nodes)) {
-          const nodes = parsed.nodes as FlowNode[];
-          const connections = (parsed.connections || []) as FlowConnection[];
-          commit(() => ({ nodes, connections }), [{ t: "doc.replace", origin: uid, nodes, connections }]);
-          setTimeout(() => fitView(), 80);
-        } else alert("Invalid flowchart JSON format.");
-      } catch {
-        alert("Failed to parse flowchart JSON file.");
-      }
-    };
+    reader.onload = (evt) => loadParsedJSON(evt.target?.result as string);
     reader.readAsText(file);
     e.target.value = "";
   };
@@ -1222,6 +2122,38 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     [commit, uid, snapshotNow, sizes, fitView]
   );
 
+  /**
+   * Apply an AI edit plan to the live document. Snapshots a version first (so the
+   * change is recoverable from history as well as undo), commits the resulting ops
+   * so peers converge, and re-runs auto-layout only when steps were added or
+   * removed — a pure field edit leaves hand-placed positions alone.
+   * Returns a one-line summary for the AI dialog.
+   */
+  const applyAIEditPlan = useCallback(
+    (operations: AIEditOp[], summary: string) => {
+      snapshotNow(summary ? `Before AI edit: ${summary.slice(0, 60)}` : "Before AI edit");
+      const { data: next, ops, title: newTitle, counts } = applyAIEdits(dataRef.current, operations, uid);
+
+      commit(() => next, ops);
+      if (newTitle && newTitle !== projectTitle) handleSaveTitle(newTitle);
+
+      if (counts.added || counts.deleted) {
+        // Wait for the new cards to be measured, then arrange and fit.
+        setTimeout(() => {
+          const laid = autoLayout(dataRef.current.nodes, dataRef.current.connections, sizes, layoutPrefsRef.current);
+          commit((prev) => ({ ...prev, nodes: laid }), [
+            { t: "doc.replace", origin: uid, nodes: laid, connections: dataRef.current.connections },
+          ]);
+          setTimeout(() => fitView(), 80);
+        }, 350);
+      }
+
+      return describeCounts(counts);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [commit, uid, snapshotNow, sizes, fitView, projectTitle]
+  );
+
   // Restore a version snapshot into the live document (broadcast to peers).
   const restoreVersion = useCallback(
     (restored: FlowData) => {
@@ -1249,443 +2181,272 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   }, [slug]);
 
   /* ------------------------------- render ------------------------------ */
+  const selectedEdge = selectedConn ? routeById.get(selectedConn) : undefined;
+  const selectedNodes = data.nodes.filter((n) => selectedIds.includes(n.id));
+
   return (
-    <div className="flex flex-col h-screen bg-zinc-100 dark:bg-zinc-900">
-      {/* Header */}
-      <div className="flex items-center justify-between px-5 py-2.5 bg-white dark:bg-zinc-800 border-b border-zinc-200 dark:border-zinc-700 z-50 relative shadow-sm gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <a
-            href="/"
-            className="w-[34px] h-[34px] bg-emerald-700 dark:bg-emerald-600 rounded-lg flex items-center justify-center text-white font-bold text-base hover:bg-emerald-600 transition-colors shadow-sm shrink-0"
-            title="Back to all flowcharts"
-          >
-            R
-          </a>
-          <div className="min-w-0">
-            {isEditingTitle ? (
-              <div className="flex items-center gap-2">
-                <div className="flex flex-col gap-1">
-                  <input
-                    autoFocus
-                    type="text"
-                    value={tempTitle}
-                    onChange={(e) => setTempTitle(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleSaveTitle();
-                      if (e.key === "Escape") setIsEditingTitle(false);
-                    }}
-                    className="px-2.5 py-1 text-sm font-semibold rounded-lg border border-emerald-500 bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 outline-none w-64 shadow-xs"
-                    placeholder="Flowchart Title"
-                  />
-                  <input
-                    type="text"
-                    value={tempSubtitle}
-                    onChange={(e) => setTempSubtitle(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleSaveTitle();
-                      if (e.key === "Escape") setIsEditingTitle(false);
-                    }}
-                    className="px-2.5 py-0.5 text-xs rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300 outline-none w-64 shadow-xs"
-                    placeholder="Description / Subtitle"
-                  />
-                </div>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={handleSaveTitle}
-                    className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
-                  >
-                    Save
-                  </button>
-                  <button
-                    onClick={() => setIsEditingTitle(false)}
-                    className="px-2 py-1.5 text-xs text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div
-                onClick={() => {
-                  if (readOnly) return;
-                  setTempTitle(projectTitle);
-                  setTempSubtitle(projectSubtitle);
-                  setIsEditingTitle(true);
-                }}
-                className={`group/title p-1 -m-1 rounded-lg transition-colors ${
-                  readOnly ? "" : "cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-700/60"
-                }`}
-                title={readOnly ? undefined : "Click to edit flowchart name & description"}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-[15px] font-semibold font-display text-zinc-900 dark:text-zinc-100 tracking-tight truncate group-hover/title:text-emerald-700 dark:group-hover/title:text-emerald-400 flex items-center gap-1.5 transition-colors">
-                    {projectTitle}
-                    {!readOnly && (
-                      <svg className="w-3.5 h-3.5 opacity-0 group-hover/title:opacity-80 transition-opacity text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                      </svg>
-                    )}
-                  </span>
-                  {readOnly ? (
-                    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full shrink-0 bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300 flex items-center gap-1">
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                        <circle cx="12" cy="12" r="3" />
-                      </svg>
-                      View only
-                    </span>
-                  ) : (
-                    <span
-                      className={`text-[10px] font-medium px-2 py-0.5 rounded-full shrink-0 ${
-                        saveStatus === "saving"
-                          ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
-                          : saveStatus === "offline"
-                          ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
-                          : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
-                      }`}
-                    >
-                      {saveStatus === "saving" ? "Saving…" : saveStatus === "offline" ? "Offline" : "Saved"}
-                    </span>
-                  )}
-                </div>
-                <div className="text-[11px] text-zinc-400 truncate">
-                  {projectSubtitle || (!readOnly && <span className="italic opacity-60">Add description...</span>)}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+    <div className="flex flex-col h-screen overflow-hidden" style={{ background: "var(--ui-canvas)" }}>
+      <TopBar
+        title={projectTitle}
+        subtitle={projectSubtitle}
+        saveStatus={saveStatus}
+        readOnly={readOnly}
+        me={user}
+        peers={peers}
+        connected={status === "live"}
+        viewMode={viewMode}
+        zoom={zoom}
+        showLeft={showLeft}
+        showRight={showRight}
+        onToggleLeft={() => togglePanel("left")}
+        onToggleRight={() => togglePanel("right")}
+        zoomOnScroll={zoomOnScroll}
+        onToggleZoomOnScroll={() => setZoomOnScroll((v) => !v)}
+        onRename={(t, sub) => handleSaveTitle(t, sub)}
+        onEditName={() => setAskName(true)}
+        onViewMode={setViewMode}
+        onZoomIn={() => {
+          const r = cwRef.current!.getBoundingClientRect();
+          zoomAt(1.2, r.width / 2, r.height / 2);
+        }}
+        onZoomOut={() => {
+          const r = cwRef.current!.getBoundingClientRect();
+          zoomAt(0.8, r.width / 2, r.height / 2);
+        }}
+        onZoomReset={() => {
+          const r = cwRef.current!.getBoundingClientRect();
+          zoomAt(1 / viewRef.current.zoom, r.width / 2, r.height / 2);
+        }}
+        onFit={fitView}
+        onAI={() => setShowAI(true)}
+        onShare={copyViewLink}
+        shareCopied={shareCopied}
+        onExportPNG={doExportPNG}
+        onExportSVG={doExportSVG}
+        onExportJSON={doExportJSON}
+        onImport={() => fileInputRef.current?.click()}
+        onHistory={() => setShowHistory(true)}
+        onHandover={() => setShowHandover(true)}
+        onShortcuts={() => setShowHelp(true)}
+        onReset={handleReset}
+        onOpenCommandPalette={() => setShowCommandPalette(true)}
+      />
 
-        <div className="flex items-center gap-2 shrink-0">
-          <PresenceBar me={user} peers={peers} status={status} onEditName={() => setAskName(true)} />
-          <div className="w-px h-6 bg-zinc-200 dark:bg-zinc-700" />
-
-          <div className="flex items-center bg-zinc-100 dark:bg-zinc-900 p-0.5 rounded-lg border border-zinc-200 dark:border-zinc-700">
-            <button
-              onClick={() => setViewMode("standard")}
-              className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all ${
-                viewMode === "standard"
-                  ? "bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-xs"
-                  : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
-              }`}
-            >
-              Standard
-            </button>
-            <button
-              onClick={() => setViewMode("detailed")}
-              className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all flex items-center gap-1 ${
-                viewMode === "detailed"
-                  ? "bg-emerald-700 text-white shadow-xs"
-                  : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
-              }`}
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse" />
-              Detailed
-            </button>
-          </div>
-
-          {!readOnly && (
-            <button
-              onClick={() => setShowAI(true)}
-              className="px-3 py-1.5 text-xs font-semibold rounded-md text-white bg-gradient-to-br from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 transition-colors shadow-sm flex items-center gap-1.5"
-              title="Generate a flowchart from a description"
-            >
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 2l1.9 5.1L19 9l-5.1 1.9L12 16l-1.9-5.1L5 9l5.1-1.9L12 2z" />
-              </svg>
-              AI
-            </button>
-          )}
-
-          {!readOnly && (
-            <button
-              onClick={() => setShowHistory(true)}
-              className="px-3 py-1.5 text-xs font-semibold border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 rounded-md transition-colors shadow-xs flex items-center gap-1.5"
-              title="Version history"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path d="M3 3v5h5M3.05 13A9 9 0 1 0 6 5.3L3 8" />
-                <path d="M12 7v5l3 2" />
-              </svg>
-              History
-            </button>
-          )}
-
-          {!readOnly && (
-            <button
-              onClick={() => setShowHandover(true)}
-              className="px-3 py-1.5 text-xs font-semibold border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 rounded-md transition-colors shadow-xs flex items-center gap-1"
-            >
-              📋 Handover
-            </button>
-          )}
-
-          {/* Export dropdown */}
-          <div className="relative">
-            <button
-              onClick={() => setShowExport((s) => !s)}
-              className="px-3 py-1.5 text-xs font-medium border border-zinc-300 dark:border-zinc-600 rounded-md bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors flex items-center gap-1"
-            >
-              Export ▾
-            </button>
-            {showExport && (
-              <>
-                <div className="fixed inset-0 z-[290]" onClick={() => setShowExport(false)} />
-                <div className="absolute right-0 mt-1 w-40 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-xl z-[300] p-1">
-                  {[
-                    ["PNG image", doExportPNG],
-                    ["SVG vector", doExportSVG],
-                    ["JSON data", doExportJSON],
-                  ].map(([label, fn]) => (
-                    <button
-                      key={label as string}
-                      onClick={fn as () => void}
-                      className="w-full text-left px-3 py-2 text-[12.5px] rounded-md text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700"
-                    >
-                      {label as string}
-                    </button>
-                  ))}
-                  <div className="h-px bg-zinc-200 dark:bg-zinc-700 my-1" />
-                  <button
-                    onClick={() => {
-                      fileInputRef.current?.click();
-                      setShowExport(false);
-                    }}
-                    className="w-full text-left px-3 py-2 text-[12.5px] rounded-md text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700"
-                  >
-                    Import JSON…
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-          <input type="file" ref={fileInputRef} onChange={handleImportJSON} accept=".json" className="hidden" />
-
-          <button
-            onClick={copyViewLink}
-            className="px-3 py-1.5 text-xs font-medium border border-zinc-300 dark:border-zinc-600 rounded-md bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors flex items-center gap-1.5"
-            title="Copy a view-only link"
-          >
-            {shareCopied ? (
-              <>
-                <svg className="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5" /></svg>
-                Copied
-              </>
-            ) : (
-              <>
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" /><path d="M16 6l-4-4-4 4" /><path d="M12 2v13" /></svg>
-                Share
-              </>
-            )}
-          </button>
-
-          <button
-            onClick={fitView}
-            className="px-3 py-1.5 text-xs font-medium border border-zinc-300 dark:border-zinc-600 rounded-md bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors"
-          >
-            Fit
-          </button>
-
-          {!readOnly && (
-            <button
-              onClick={handleReset}
-              className="px-3 py-1.5 text-xs font-medium border border-red-200 dark:border-red-900/50 rounded-md bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
-            >
-              Reset
-            </button>
-          )}
-
-          <ThemeToggle />
-        </div>
-      </div>
-
-      {/* Canvas */}
-      <div
-        ref={cwRef}
-        className="flex-1 relative overflow-hidden"
-        onMouseDown={onCanvasMouseDown}
-        onDoubleClick={onCanvasDoubleClick}
-      >
-        <div
-          className="absolute inset-0 pointer-events-none z-0"
-          style={{
-            backgroundImage: "radial-gradient(circle, rgb(200 200 195 / 0.14) 1px, transparent 1px)",
-            backgroundSize: `${GRID * zoom}px ${GRID * zoom}px`,
-            backgroundPosition: `${pan.x}px ${pan.y}px`,
-          }}
-        />
-
-        <div
-          ref={canvasRef}
-          className={`absolute top-0 left-0 w-[12000px] h-[12000px] origin-top-left ${
-            tool === "pan" || spaceRef.current || panDragRef.current ? "cursor-grabbing" : ""
-          }`}
-          style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
-        >
-          <Connections
+      <div className="flex-1 flex min-h-0">
+        {/* Left rail — everything in the diagram, findable by name. Hidden on narrow
+            windows so the canvas keeps its width on a laptop screen. */}
+        {showLeft && (
+          <LayersPanel
             nodes={data.nodes}
             connections={data.connections}
-            sizes={sizes}
-            selectedId={selectedConn}
-            onSelect={selectConn}
-            onContextMenu={connContextMenu}
-            onEditLabel={openLabelEdit}
-            ghost={ghost}
-          />
-          {marquee && (
-            <div
-              className="absolute border border-emerald-500 bg-emerald-500/10 z-[6] pointer-events-none"
-              style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
-            />
-          )}
-          <div className="relative z-10">
-            {data.nodes.map((node) => (
-              <FlowNodeCard
-                key={node.id}
-                node={node}
-                isSelected={selectedIds.includes(node.id)}
-                viewMode={viewMode}
-                onMouseDown={(e) => onNodeMouseDown(e, node)}
-                onDoubleClick={() => !readOnly && setEditNode(node)}
-                onContextMenu={(e) => !readOnly && nodeContextMenu(e, node)}
-                onPortMouseDown={(e, port) => onPortMouseDown(e, node, port)}
-                onPortMouseUp={() => {}}
-                onUpdate={saveNode}
-                onDelete={(id) => {
-                  select([id]);
-                  deleteSelection();
-                }}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Legend */}
-        <div className="fixed top-[62px] right-3.5 bg-white/95 dark:bg-zinc-800/95 backdrop-blur border border-zinc-200 dark:border-zinc-700 rounded-xl p-3 z-40 shadow-md text-[11px]">
-          <div className="text-[9px] font-bold uppercase tracking-wider text-zinc-400 mb-2">Legend</div>
-          <div className="grid grid-cols-1 gap-1.5">
-            {[
-              ["bg-emerald-700", "Start / Success"],
-              ["bg-zinc-700", "Process step"],
-              ["bg-amber-700", "Decision"],
-              ["bg-blue-700 border border-dashed border-blue-400", "Sub-process"],
-              ["bg-red-600", "End (cancelled)"],
-            ].map(([cls, label]) => (
-              <div key={label} className="flex items-center gap-2 text-zinc-500 dark:text-zinc-400">
-                <div className={`w-3 h-3 rounded ${cls} shrink-0`} />
-                {label}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {loaded && (
-          <Minimap
-            nodes={data.nodes}
-            sizes={sizes}
-            pan={pan}
-            zoom={zoom}
-            viewportW={viewport.w}
-            viewportH={viewport.h}
-            onRecenter={recenterWorld}
+            selectedIds={selectedIds}
+            selectedConn={selectedConn}
+            readOnly={readOnly}
+            onSelectNode={(id, additive) =>
+              select(additive ? [...new Set([...selRef.current, id])] : [id])
+            }
+            onSelectConn={selectConn}
+            onRenameNode={renameNode}
+            onFocusNode={focusNode}
+            onDeleteNode={(id) => {
+              select([id]);
+              deleteSelection();
+            }}
           />
         )}
 
-        <div className="fixed bottom-20 right-5 flex items-center gap-2 z-40">
+        {/* Canvas */}
+        <div
+          ref={cwRef}
+          className="flex-1 relative overflow-hidden min-w-0"
+          onMouseDown={onCanvasMouseDown}
+          onDoubleClick={onCanvasDoubleClick}
+          onDragOver={(e) => {
+            e.preventDefault();
+            if (!readOnly && e.dataTransfer.types.includes("Files")) {
+              setIsDraggingFile(true);
+            }
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault();
+            setIsDraggingFile(false);
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            setIsDraggingFile(false);
+            if (readOnly) return;
+            const file = e.dataTransfer.files?.[0];
+            if (file && file.name.endsWith(".json")) {
+              const reader = new FileReader();
+              reader.onload = (evt) => loadParsedJSON(evt.target?.result as string);
+              reader.readAsText(file);
+            }
+          }}
+        >
+          {isDraggingFile && (
+            <div className="absolute inset-0 z-50 bg-sky-500/20 dark:bg-sky-500/30 backdrop-blur-xs border-2 border-dashed border-sky-500 flex flex-col items-center justify-center text-sky-900 dark:text-sky-100 pointer-events-none">
+              <span className="text-4xl mb-2">📂</span>
+              <p className="text-sm font-bold">Drop JSON flowchart to import</p>
+              <p className="text-xs opacity-80">Replaces current diagram and auto-connects steps</p>
+            </div>
+          )}
+
+          <div
+            className="absolute inset-0 pointer-events-none z-0"
+            style={{
+              backgroundImage: "radial-gradient(circle, var(--ui-dot) 1px, transparent 1px)",
+              backgroundSize: `${GRID * zoom}px ${GRID * zoom}px`,
+              backgroundPosition: `${pan.x}px ${pan.y}px`,
+            }}
+          />
+
+          <div
+            ref={canvasRef}
+            className={`absolute top-0 left-0 w-[12000px] h-[12000px] origin-top-left ${
+              tool === "pan" || spaceRef.current || panDragRef.current ? "cursor-grabbing" : ""
+            }`}
+            style={{ transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`, willChange: "transform" }}
+          >
+            <Connections
+              nodes={data.nodes}
+              routes={routes}
+              sizes={sizes}
+              selectedId={selectedConn}
+              onSelect={selectConn}
+              onContextMenu={connContextMenu}
+              onEditLabel={openLabelEdit}
+              ghost={ghost}
+              onWaypointDown={readOnly ? undefined : onWaypointDown}
+              onWaypointRemove={readOnly ? undefined : removeWaypoint}
+              onSegmentDown={readOnly ? undefined : onSegmentDown}
+              onEndpointDown={readOnly ? undefined : onEndpointDown}
+            />
+            {marquee && (
+              <div
+                className="absolute z-[6] pointer-events-none"
+                style={{
+                  left: marquee.x,
+                  top: marquee.y,
+                  width: marquee.w,
+                  height: marquee.h,
+                  border: "1px solid var(--ui-accent)",
+                  background: "var(--ui-accent-soft)",
+                }}
+              />
+            )}
+            <div className="relative z-10">
+              {data.nodes.map((node) => (
+                <FlowNodeCard
+                  key={node.id}
+                  node={node}
+                  isSelected={selectedIds.includes(node.id)}
+                  isDropTarget={dropTarget === node.id}
+                  viewMode={viewMode}
+                  onMouseDown={(e) => onNodeMouseDown(e, node)}
+                  onDoubleClick={() => !readOnly && setEditNode(node)}
+                  onContextMenu={(e) => !readOnly && nodeContextMenu(e, node)}
+                  onPortMouseDown={(e, port) => onPortMouseDown(e, node, port)}
+                  onPortMouseUp={() => {}}
+                  onQuickAdd={readOnly ? undefined : handleQuickAdd}
+                  onUpdate={saveNode}
+                  onDelete={(id) => {
+                    select([id]);
+                    deleteSelection();
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+
+          {loaded && (
+            <Minimap
+              nodes={data.nodes}
+              sizes={sizes}
+              pan={pan}
+              zoom={zoom}
+              viewportW={viewport.w}
+              viewportH={viewport.h}
+              onRecenter={recenterWorld}
+            />
+          )}
+
+          {!loaded && (
+            <div
+              className="absolute inset-0 grid place-items-center text-[12px] z-20 pointer-events-none"
+              style={{ color: "var(--ui-text-faint)" }}
+            >
+              Loading diagram…
+            </div>
+          )}
+
+          {loaded && data.nodes.length === 0 && (
+            <div className="absolute inset-0 grid place-items-center z-20">
+              <div className="text-center max-w-xs">
+                <p className="text-[13px] font-semibold" style={{ color: "var(--ui-text)" }}>
+                  Nothing here yet
+                </p>
+                <p className="mt-1 text-[11.5px] leading-relaxed" style={{ color: "var(--ui-text-faint)" }}>
+                  Double-click anywhere to add a step, pick a shape from the tool strip, or let
+                  AI draft the flow from a description.
+                </p>
+              </div>
+            </div>
+          )}
+
           {snap && (
-            <span className="text-[10px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/40 px-2 py-1 rounded-md">
-              Grid snap
+            <span
+              className="absolute bottom-4 right-4 z-40 text-[10px] font-medium px-2 py-1 rounded-md"
+              style={{ background: "var(--ui-accent-soft)", color: "var(--ui-accent)" }}
+            >
+              Grid snap on
             </span>
           )}
-          <span className="text-[11px] text-zinc-400 bg-white dark:bg-zinc-800 px-2.5 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 tabular-nums">
-            {Math.round(zoom * 100)}%
-          </span>
-        </div>
-      </div>
 
-      {/* Bottom toolbar */}
-      {!readOnly && (
-      <div className="fixed bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-0.5 p-1.5 bg-white/95 dark:bg-zinc-800/95 backdrop-blur border border-zinc-200 dark:border-zinc-700 rounded-2xl shadow-xl z-50">
-        <ToolBtn active={tool === "select"} onClick={() => setTool("select")} title="Select (V)">
-          <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" />
-        </ToolBtn>
-        <ToolBtn active={tool === "pan"} onClick={() => setTool("pan")} title="Pan (H / Space)">
-          <path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8M22 10v2a10 10 0 0 1-10 10H8" />
-        </ToolBtn>
-        <div className="w-px h-5 bg-zinc-200 dark:bg-zinc-700 mx-1" />
-        <ToolBtn onClick={() => addNode("step")} title="Add Step">
-          <rect x="3" y="3" width="18" height="18" rx="3" />
-        </ToolBtn>
-        <ToolBtn onClick={() => addNode("decision")} title="Add Decision">
-          <path d="M12 2l10 10-10 10L2 12z" />
-        </ToolBtn>
-        <ToolBtn onClick={() => addNode("sub")} title="Add Sub-process">
-          <rect x="3" y="3" width="18" height="18" rx="3" strokeDasharray="4 2" />
-        </ToolBtn>
-        <ToolBtn onClick={() => addNode("start")} title="Add Start" fill>
-          <circle cx="12" cy="12" r="8" />
-        </ToolBtn>
-        <ToolBtn onClick={() => addNode("ok")} title="Add Success">
-          <circle cx="12" cy="12" r="9" />
-          <path d="M9 12l2 2 4-4" />
-        </ToolBtn>
-        <ToolBtn onClick={() => addNode("fail")} title="Add Fail">
-          <circle cx="12" cy="12" r="9" />
-          <path d="M15 9l-6 6M9 9l6 6" />
-        </ToolBtn>
-        <ToolBtn onClick={() => addNode("note")} title="Add Comment / Note (C)">
-          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
-        </ToolBtn>
-        <div className="w-px h-5 bg-zinc-200 dark:bg-zinc-700 mx-1" />
-        <div className="relative">
-          {showLayoutPanel && (
-            <>
-              <div className="fixed inset-0 z-[490]" onClick={() => setShowLayoutPanel(false)} />
-              <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 z-[500]">
-                <LayoutPanel
-                  prefs={layoutPrefs}
-                  onChange={updateLayoutPrefs}
-                  onOrganize={() => {
-                    runAutoLayout();
-                    setShowLayoutPanel(false);
-                  }}
-                  onFixOverlaps={() => {
-                    runFixOverlaps();
-                    setShowLayoutPanel(false);
-                  }}
-                  onClose={() => setShowLayoutPanel(false)}
-                />
-              </div>
-            </>
+          {!readOnly && (
+            <Toolbar
+              tool={tool}
+              onTool={setTool}
+              snap={snap}
+              onSnap={() => setSnap((v) => !v)}
+              onAdd={(t) => addNode(t)}
+              onOrganize={runAutoLayout}
+              onUndo={undo}
+              onRedo={redo}
+              canUndo={histRef.current.past.length > 0}
+              canRedo={histRef.current.future.length > 0}
+              onShortcuts={() => setShowHelp(true)}
+            />
           )}
-          <ToolBtn active={showLayoutPanel} onClick={() => setShowLayoutPanel((s) => !s)} title="Layout & spacing settings">
-            <path d="M4 6h10M4 12h16M4 18h7" />
-            <circle cx="17" cy="6" r="2" fill="currentColor" stroke="none" />
-            <circle cx="14" cy="18" r="2" fill="currentColor" stroke="none" />
-          </ToolBtn>
         </div>
-        <ToolBtn onClick={runAutoLayout} title="Auto-layout / Organize (Ctrl+L)">
-          <path d="M3 3h7v7H3zM14 3h7v4h-7zM14 11h7v10h-7zM3 14h7v7H3z" />
-        </ToolBtn>
-        <ToolBtn active={snap} onClick={() => setSnap((s) => !s)} title="Snap to grid (G)">
-          <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
-        </ToolBtn>
-        <div className="w-px h-5 bg-zinc-200 dark:bg-zinc-700 mx-1" />
-        <ToolBtn onClick={undo} title="Undo (Ctrl+Z)" disabled={histRef.current.past.length === 0}>
-          <path d="M3 10h10a5 5 0 0 1 5 5v2M3 10l6-6M3 10l6 6" />
-        </ToolBtn>
-        <ToolBtn onClick={redo} title="Redo (Ctrl+Shift+Z)" disabled={histRef.current.future.length === 0}>
-          <path d="M21 10H11a5 5 0 0 0-5 5v2M21 10l-6-6M21 10l-6 6" />
-        </ToolBtn>
-        <div className="w-px h-5 bg-zinc-200 dark:bg-zinc-700 mx-1" />
-        <ToolBtn onClick={() => setShowHelp(true)} title="Shortcuts (?)">
-          <circle cx="12" cy="12" r="9" />
-          <path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 2-2.5 2-2.5 4M12 17h.01" />
-        </ToolBtn>
-      </div>
-      )}
 
-      {/* Inline connection label editor */}
+        {/* Right rail — properties for whatever is selected. */}
+        {showRight && (
+          <InspectorPanel
+            nodes={data.nodes}
+            selected={selectedNodes}
+            conn={selectedEdge?.conn ?? null}
+            readOnly={readOnly}
+            prefs={layoutPrefs}
+            onPrefsChange={updateLayoutPrefs}
+            onOrganize={runAutoLayout}
+            onFixOverlaps={runFixOverlaps}
+            onPatchNodes={patchSelectedNodes}
+            onAlign={alignNodes}
+            onOpenEditor={setEditNode}
+            onDuplicate={() => duplicateNodes(selRef.current)}
+            onDeleteNodes={deleteSelection}
+            onPatchConn={(patch) => selectedConn && setConnField(selectedConn, patch)}
+            onResetRoute={() => selectedConn && setWaypoints(selectedConn, undefined)}
+            onDeleteConn={() => selectedConn && deleteConn(selectedConn)}
+            onChainSelected={chainSelectedNodes}
+            onAutoConnectAll={autoConnectAllNodes}
+          />
+        )}
+      </div>
+
+      <input type="file" ref={fileInputRef} onChange={handleImportJSON} accept=".json" className="hidden" />
+
+      {/* Inline pathway label editor */}
       {labelEdit && (
         <input
           autoFocus
@@ -1701,9 +2462,9 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
               setLabelEdit(null);
             } else if (e.key === "Escape") setLabelEdit(null);
           }}
-          className="fixed z-[400] -translate-x-1/2 -translate-y-1/2 px-2 py-1 text-xs rounded border border-emerald-500 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-lg outline-none"
-          style={{ left: labelEdit.sx, top: labelEdit.sy, width: 140 }}
-          placeholder="Edge label"
+          className="ui-field fixed z-[400] -translate-x-1/2 -translate-y-1/2 !w-36 shadow-xl"
+          style={{ left: labelEdit.sx, top: labelEdit.sy, borderColor: "var(--ui-accent)" }}
+          placeholder="Pathway label"
         />
       )}
 
@@ -1723,6 +2484,9 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         <AIGenerateModal
           onClose={() => setShowAI(false)}
           onGenerated={(nodes, connections) => applyGenerated(nodes, connections)}
+          getCurrent={() => dataRef.current}
+          currentTitle={projectTitle}
+          onApplyEdits={readOnly ? undefined : applyAIEditPlan}
         />
       )}
 
@@ -1749,9 +2513,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         />
       )}
 
-      {ctxMenu && (
-        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)} />
-      )}
+      {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)} />}
 
       {showHelp && <ShortcutsHelp onClose={() => setShowHelp(false)} />}
 
@@ -1765,41 +2527,34 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
           }}
         />
       )}
-    </div>
-  );
-}
 
-function ToolBtn({
-  children,
-  active,
-  onClick,
-  title,
-  fill,
-  disabled,
-}: {
-  children: React.ReactNode;
-  active?: boolean;
-  onClick?: () => void;
-  title?: string;
-  fill?: boolean;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      className={`w-9 h-9 flex items-center justify-center rounded-lg transition-colors ${
-        disabled
-          ? "opacity-30 cursor-not-allowed text-zinc-400"
-          : active
-          ? "bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300"
-          : "text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-700 dark:hover:text-zinc-200"
-      }`}
-    >
-      <svg viewBox="0 0 24 24" className="w-[18px] h-[18px]" fill={fill ? "currentColor" : "none"} stroke={fill ? "none" : "currentColor"} strokeWidth="2">
-        {children}
-      </svg>
-    </button>
+      {/* Universal Command Palette */}
+      <CommandPalette
+        isOpen={showCommandPalette}
+        onClose={() => setShowCommandPalette(false)}
+        nodes={data.nodes}
+        onSelectNode={(id) => {
+          select([id]);
+          focusNode(id);
+        }}
+        onAutoLayout={runAutoLayout}
+        onFixOverlaps={runFixOverlaps}
+        onAutoConnectAll={autoConnectAllNodes}
+        onChainSelected={chainSelectedNodes}
+        onBatchSetActor={batchSetActor}
+        onAddNode={(t) => addNode(t)}
+        onFitView={fitView}
+        onResetZoom={() => {
+          const r = cwRef.current?.getBoundingClientRect();
+          if (r) zoomAt(1 / viewRef.current.zoom, r.width / 2, r.height / 2);
+        }}
+        onToggleViewMode={() => setViewMode((m) => (m === "detailed" ? "standard" : "detailed"))}
+        onToggleSnap={() => setSnap((s) => !s)}
+        onOpenAI={() => setShowAI(true)}
+        onOpenExport={doExportPNG}
+        onExportJSON={doExportJSON}
+        currentSlug={slug}
+      />
+    </div>
   );
 }

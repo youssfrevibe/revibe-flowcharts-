@@ -79,6 +79,20 @@ export interface FlowConnection {
   bold?: boolean;
   /** Optional custom connection pathway color override. */
   color?: string;
+  /**
+   * Manual route override — world-space points the pathway is dragged through, in order.
+   * When present the automatic router steps aside and the pathway is drawn orthogonally
+   * from the source port, through every waypoint, into the target port. This is what lets
+   * two pathways that would otherwise overlap be pulled onto separate lanes by hand.
+   * Cleared by "Reset route" and by a full auto-layout (which invalidates world positions).
+   */
+  waypoints?: Pt[];
+}
+
+/** A point in canvas world coordinates. */
+export interface Pt {
+  x: number;
+  y: number;
 }
 
 export type Port = "top" | "bottom" | "left" | "right";
@@ -111,5 +125,6 @@ export type Op =
   | { t: "nodes.move"; origin: string; moves: { id: string; x: number; y: number }[] }
   | { t: "node.delete"; origin: string; id: string }
   | { t: "conn.upsert"; origin: string; conn: FlowConnection }
+  | { t: "conn.waypoints"; origin: string; id: string; waypoints?: Pt[] }
   | { t: "conn.delete"; origin: string; id: string }
   | { t: "doc.replace"; origin: string; nodes: FlowNode[]; connections: FlowConnection[] };

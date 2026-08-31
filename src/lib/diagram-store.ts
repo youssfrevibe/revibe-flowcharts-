@@ -15,7 +15,7 @@ export const BUILTIN_DIAGRAMS: DiagramMetadata[] = [
     slug: "revibe-kb",
     title: "Revibe KB & Claims Resolution",
     description: "Knowledge base tier routing and claims resolution process",
-    nodeCount: 4,
+    nodeCount: 11,
     color: "bg-blue-700",
   },
 ];

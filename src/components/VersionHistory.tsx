@@ -55,7 +55,6 @@ export default function VersionHistory({ slug, authorName, getCurrent, onRestore
   const handleRestore = async (v: VersionMeta) => {
     if (!window.confirm(`Restore this version from ${timeAgo(v.created_at)}? Your current diagram will be saved as a version first.`)) return;
     setRestoringId(v.id);
-    // Snapshot the current state so a restore is itself undoable.
     await saveVersion(slug, getCurrent(), { author: authorName, label: "Before restore" });
     const data = await fetchVersion(slug, v.id);
     setRestoringId(null);
@@ -66,14 +65,24 @@ export default function VersionHistory({ slug, authorName, getCurrent, onRestore
   };
 
   return (
-    <div className="fixed inset-0 z-[640] flex justify-end bg-black/30" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="w-full max-w-sm h-full bg-white dark:bg-zinc-800 border-l border-zinc-200 dark:border-zinc-700 shadow-2xl flex flex-col">
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-zinc-200 dark:border-zinc-700">
+    <div
+      className="fixed inset-0 z-[820] flex justify-end bg-black/40 backdrop-blur-xs animate-in fade-in duration-150"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="w-full max-w-sm h-full bg-white dark:bg-zinc-800 border-l border-zinc-200 dark:border-zinc-700 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-200 dark:border-zinc-700/80 bg-zinc-50/50 dark:bg-zinc-900/40">
           <div>
-            <h2 className="text-[15px] font-semibold font-display text-zinc-900 dark:text-zinc-100">Version history</h2>
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Snapshots you can restore anytime</p>
+            <h2 className="text-[15px] font-bold font-display text-zinc-900 dark:text-zinc-100">
+              Version Snapshots
+            </h2>
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+              Timeline of revisions you can restore anytime
+            </p>
           </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-400 text-lg">
+          <button
+            onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors text-lg"
+          >
             &times;
           </button>
         </div>
@@ -82,9 +91,9 @@ export default function VersionHistory({ slug, authorName, getCurrent, onRestore
           <button
             onClick={handleSave}
             disabled={saving}
-            className="w-full px-3 py-2 text-xs font-semibold bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg shadow-sm transition-colors flex items-center justify-center gap-1.5"
+            className="w-full px-3.5 py-2 text-xs font-semibold bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5"
           >
-            {saving ? "Saving…" : "＋ Save current as version"}
+            {saving ? "Saving Snapshot…" : "＋ Snapshot Current State"}
           </button>
         </div>
 
@@ -92,29 +101,29 @@ export default function VersionHistory({ slug, authorName, getCurrent, onRestore
           {loading ? (
             <div className="text-center text-xs text-zinc-400 py-8">Loading history…</div>
           ) : versions.length === 0 ? (
-            <div className="text-center text-xs text-zinc-400 py-10 px-4">
-              No versions yet. Snapshots are saved automatically as you edit, or save one now.
+            <div className="text-center text-xs text-zinc-400 py-10 px-4 leading-relaxed">
+              No previous versions yet. Snapshots are created automatically during active editing sessions.
             </div>
           ) : (
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               {versions.map((v, i) => (
                 <div
                   key={v.id}
-                  className="group flex items-center gap-3 px-3 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:border-emerald-400 dark:hover:border-emerald-500 transition-colors"
+                  className="group flex items-center gap-3 p-3 rounded-xl border border-zinc-200/90 dark:border-zinc-700/80 hover:border-sky-400 dark:hover:border-sky-500 bg-white dark:bg-zinc-850 transition-colors shadow-2xs"
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="text-[12.5px] font-medium text-zinc-800 dark:text-zinc-200 truncate">
-                      {v.label || (i === 0 ? "Latest snapshot" : "Snapshot")}
+                    <div className="text-[13px] font-semibold text-zinc-800 dark:text-zinc-200 truncate">
+                      {v.label || (i === 0 ? "Latest Snapshot" : `Snapshot #${versions.length - i}`)}
                     </div>
-                    <div className="text-[11px] text-zinc-400 truncate">
+                    <div className="text-[11px] text-zinc-400 truncate mt-0.5">
                       {timeAgo(v.created_at)}
-                      {v.author_name ? ` · ${v.author_name}` : ""} · {v.node_count} nodes
+                      {v.author_name ? ` · ${v.author_name}` : ""} · {v.node_count} steps
                     </div>
                   </div>
                   <button
                     onClick={() => handleRestore(v)}
                     disabled={restoringId === v.id}
-                    className="shrink-0 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/60 rounded-md hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-colors disabled:opacity-50"
+                    className="shrink-0 px-3 py-1.5 text-[11px] font-semibold text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800/80 rounded-lg hover:bg-sky-50 dark:hover:bg-sky-950/50 transition-colors disabled:opacity-50"
                   >
                     {restoringId === v.id ? "…" : "Restore"}
                   </button>

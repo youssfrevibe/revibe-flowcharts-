@@ -11,6 +11,8 @@ export interface ContextMenuSwatch {
 
 export interface ContextMenuItem {
   label?: string;
+  shortcut?: string;
+  icon?: string;
   action?: () => void;
   danger?: boolean;
   separator?: boolean;
@@ -27,25 +29,25 @@ interface Props {
 }
 
 export default function ContextMenu({ x, y, items, onClose }: Props) {
-  // Prevent overflow on right and bottom of screen
+  // Prevent overflow on right and bottom of viewport
   const adjustedX = typeof window !== "undefined" && x + 240 > window.innerWidth ? window.innerWidth - 245 : x;
-  const adjustedY = typeof window !== "undefined" && y + 360 > window.innerHeight ? window.innerHeight - 365 : y;
+  const adjustedY = typeof window !== "undefined" && y + 380 > window.innerHeight ? window.innerHeight - 385 : y;
 
   return (
     <>
       <div className="fixed inset-0 z-[290]" onClick={onClose} />
       <div
-        className="fixed z-[300] bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl shadow-2xl min-w-[210px] p-1.5 backdrop-blur-xs"
+        className="fixed z-[300] bg-white/95 dark:bg-zinc-800/95 border border-zinc-200 dark:border-zinc-700 rounded-2xl shadow-2xl min-w-[220px] p-1.5 backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
         style={{ left: Math.max(10, adjustedX), top: Math.max(10, adjustedY) }}
       >
         {items.map((item, i) => {
           if (item.separator) {
-            return <div key={i} className="h-px bg-zinc-200 dark:bg-zinc-700 mx-2 my-1" />;
+            return <div key={i} className="h-px bg-zinc-200 dark:bg-zinc-700/70 mx-2 my-1" />;
           }
 
           if (item.header) {
             return (
-              <div key={i} className="px-3 pt-1.5 pb-1 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+              <div key={i} className="px-3 pt-2 pb-1 text-[9.5px] font-bold uppercase tracking-wider text-zinc-400">
                 {item.header}
               </div>
             );
@@ -53,7 +55,7 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
 
           if (item.swatches) {
             return (
-              <div key={i} className="px-2 py-1.5 flex items-center gap-1.5 flex-wrap max-w-[220px]">
+              <div key={i} className="px-2.5 py-1.5 flex items-center gap-1.5 flex-wrap max-w-[230px]">
                 {item.swatches.map((s) => (
                   <button
                     key={s.id}
@@ -63,7 +65,7 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
                       s.onClick();
                       onClose();
                     }}
-                    className="w-5 h-5 rounded-full border border-black/15 hover:scale-125 transition-transform"
+                    className="w-5.5 h-5.5 rounded-full border border-black/15 dark:border-white/20 hover:scale-125 transition-transform shadow-xs"
                     style={{ backgroundColor: s.fill }}
                   />
                 ))}
@@ -78,17 +80,26 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
           return (
             <button
               key={i}
+              type="button"
               onClick={() => {
                 if (item.action) item.action();
                 onClose();
               }}
-              className={`w-full text-left px-3 py-1.5 text-[12.5px] rounded-lg transition-colors flex items-center justify-between ${
+              className={`w-full text-left px-3 py-1.5 text-[12.5px] rounded-lg transition-colors flex items-center justify-between group ${
                 item.danger
                   ? "text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/50"
-                  : "text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700"
+                  : "text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700/60"
               }`}
             >
-              <span>{item.label}</span>
+              <div className="flex items-center gap-2">
+                {item.icon && <span className="text-xs">{item.icon}</span>}
+                <span>{item.label}</span>
+              </div>
+              {item.shortcut && (
+                <kbd className="text-[10px] font-mono text-zinc-400 opacity-60 group-hover:opacity-100">
+                  {item.shortcut}
+                </kbd>
+              )}
             </button>
           );
         })}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { DiagramMetadata } from "@/lib/types";
 import {
@@ -12,26 +12,30 @@ import {
   archiveDiagram,
   unarchiveDiagram,
   fetchArchivedDiagrams,
+  saveToCloud,
   BUILTIN_DIAGRAMS,
 } from "@/lib/diagram-store";
 import ThemeToggle from "@/components/ThemeToggle";
 
 const THEME_COLORS = [
-  { id: "bg-emerald-700", name: "Emerald", fill: "#047857" },
-  { id: "bg-teal-700", name: "Teal", fill: "#0f766e" },
-  { id: "bg-cyan-700", name: "Cyan", fill: "#0e7490" },
-  { id: "bg-blue-700", name: "Blue", fill: "#1d4ed8" },
-  { id: "bg-indigo-700", name: "Indigo", fill: "#4338ca" },
-  { id: "bg-purple-700", name: "Purple", fill: "#7e22ce" },
-  { id: "bg-rose-600", name: "Rose", fill: "#e11d48" },
-  { id: "bg-amber-700", name: "Amber", fill: "#b45309" },
-  { id: "bg-slate-700", name: "Slate", fill: "#334155" },
+  { id: "emerald", name: "Emerald", fill: "#065f46" },
+  { id: "teal", name: "Teal", fill: "#115e59" },
+  { id: "cyan", name: "Cyan", fill: "#155e75" },
+  { id: "blue", name: "Blue", fill: "#1e40af" },
+  { id: "indigo", name: "Indigo", fill: "#3730a3" },
+  { id: "purple", name: "Purple", fill: "#6b21a8" },
+  { id: "rose", name: "Rose", fill: "#9f1239" },
+  { id: "amber", name: "Amber", fill: "#92400e" },
+  { id: "slate", name: "Slate", fill: "#1e293b" },
 ];
 
 export default function Home() {
   const [diagrams, setDiagrams] = useState<DiagramMetadata[]>(BUILTIN_DIAGRAMS);
-  const [, setMounted] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "custom" | "builtin">("all");
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const fileInputRef = useState<HTMLInputElement | null>(null);
 
   // Create Modal
   const [showModal, setShowModal] = useState(false);
@@ -59,7 +63,6 @@ export default function Home() {
   };
 
   useEffect(() => {
-    setMounted(true);
     setDiagrams(getCachedDiagrams());
     refresh();
     const onFocus = () => refresh();
@@ -75,13 +78,45 @@ export default function Home() {
     window.location.href = `/diagram/${created.slug}`;
   };
 
+  const handleImportFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const parsed = JSON.parse(e.target?.result as string);
+        if (Array.isArray(parsed.nodes)) {
+          const diagramTitle = file.name.replace(/\.json$/i, "").replace(/[-_]/g, " ") || "Imported Flowchart";
+          const nodes = parsed.nodes;
+          let connections = parsed.connections || [];
+          if (connections.length === 0 && nodes.length > 1) {
+            const sorted = [...nodes].sort((a: any, b: any) => (a.y || 0) - (b.y || 0) || (a.x || 0) - (b.x || 0));
+            connections = sorted.slice(0, -1).map((src: any, i: number) => ({
+              id: `c_${i}_${Date.now()}`,
+              from: src.id,
+              to: sorted[i + 1].id,
+              label: src.type === "decision" ? "Yes" : "",
+              type: src.type === "decision" ? "cyes" : "",
+            }));
+          }
+          const created = await createCustomDiagram(diagramTitle, "Imported from JSON backup");
+          await saveToCloud(created.slug, { nodes, connections }, { title: diagramTitle, description: "Imported from JSON backup", color: "emerald", isCustom: true });
+          window.location.href = `/diagram/${created.slug}`;
+        } else {
+          alert("Invalid flowchart JSON format.");
+        }
+      } catch {
+        alert("Failed to parse flowchart JSON.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
   const handleOpenEdit = (e: React.MouseEvent, d: DiagramMetadata) => {
     e.preventDefault();
     e.stopPropagation();
     setEditingDiagram(d);
     setEditTitle(d.title);
     setEditDesc(d.description || "");
-    setEditColor(d.color || "bg-purple-700");
+    setEditColor(d.color || "emerald");
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
@@ -93,7 +128,7 @@ export default function Home() {
     const updatedDesc = editDesc.trim();
     const updatedColor = editColor || editingDiagram.color;
 
-    // Optimistically update list
+    // Optimistic update
     setDiagrams((prev) =>
       prev.map((d) =>
         d.slug === editingDiagram.slug
@@ -116,7 +151,6 @@ export default function Home() {
   const handleArchive = async (e: React.MouseEvent, d: DiagramMetadata) => {
     e.preventDefault();
     e.stopPropagation();
-    // Optimistic: remove from the main list immediately.
     setDiagrams((prev) => prev.filter((x) => x.slug !== d.slug));
     setArchived((prev) => [d, ...prev.filter((x) => x.slug !== d.slug)]);
     await archiveDiagram(d.slug);
@@ -141,154 +175,269 @@ export default function Home() {
     }
   };
 
+  // Filter & Search
+  const filteredDiagrams = useMemo(() => {
+    return diagrams.filter((d) => {
+      if (filter === "custom" && !d.isCustom) return false;
+      if (filter === "builtin" && d.isCustom) return false;
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase();
+      return d.title.toLowerCase().includes(q) || (d.description && d.description.toLowerCase().includes(q));
+    });
+  }, [diagrams, filter, searchQuery]);
+
+  const totalSteps = useMemo(() => {
+    return diagrams.reduce((sum, d) => sum + (d.nodeCount || 0), 0);
+  }, [diagrams]);
+
   return (
-    <div className="min-h-screen bg-zinc-100 dark:bg-zinc-900">
-      <div className="max-w-3xl mx-auto px-6 py-14">
-        {/* Top Header */}
-        <div className="flex items-center justify-between mb-10 pb-6 border-b border-zinc-200 dark:border-zinc-800">
+    <div className="min-h-screen bg-[#f8f9fa] dark:bg-[#0c0d0e] text-slate-900 dark:text-slate-100 selection:bg-sky-500 selection:text-white transition-colors duration-150">
+      {/* Top Navigation Header */}
+      <header className="border-b border-zinc-200/80 dark:border-zinc-800/80 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md sticky top-0 z-30">
+        <div className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3.5">
-            <div className="w-11 h-11 bg-emerald-700 dark:bg-emerald-600 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-md">
+            <div className="w-9 h-9 bg-gradient-to-br from-sky-600 to-indigo-600 rounded-xl flex items-center justify-center text-white font-extrabold text-lg shadow-md shadow-sky-500/20">
               R
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 tracking-tight">
-                Revibe&apos;s Flowcharts
-              </h1>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                Live collaborative process maps — changes sync to everyone in real time
-              </p>
+              <div className="flex items-center gap-2">
+                <span className="font-display font-bold text-[16px] tracking-tight text-zinc-900 dark:text-zinc-50">
+                  Revibe Operations
+                </span>
+                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-sky-50 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800">
+                  Process Maps
+                </span>
+              </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <ThemeToggle />
+
+          <div className="flex items-center gap-2.5">
+            <ThemeToggle className="!w-8.5 !h-8.5" />
+            <label className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 dark:border-zinc-700/80 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-semibold text-xs rounded-xl cursor-pointer transition-colors shadow-2xs">
+              <svg className="w-3.5 h-3.5 text-zinc-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+              </svg>
+              <span>Import JSON</span>
+              <input
+                type="file"
+                accept=".json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleImportFile(file);
+                  e.target.value = "";
+                }}
+              />
+            </label>
             <button
               onClick={() => setShowModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white font-medium text-xs rounded-xl shadow-sm transition-all"
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-semibold text-xs rounded-xl shadow-md shadow-sky-600/20 transition-all active:scale-95"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path d="M12 5v14M5 12h14" />
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
               </svg>
-              New Flowchart
+              <span>New Flowchart</span>
             </button>
           </div>
         </div>
+      </header>
 
-        {/* List of Flowcharts */}
-        <div className="space-y-3">
-          {diagrams.map((d) => (
+      {/* Main Workspace Body */}
+      <main className="max-w-5xl mx-auto px-6 py-10">
+        {/* Hero Section */}
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-8 pb-6 border-b border-zinc-200/80 dark:border-zinc-800/80">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight font-display text-zinc-900 dark:text-zinc-50">
+              Process Workflows
+            </h1>
+            <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400 mt-1 max-w-xl leading-relaxed">
+              Standard operating procedures, warranty funnels, and live collaborative workflows synced across the team.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3 self-start sm:self-auto text-xs text-zinc-500 dark:text-zinc-400">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/60 font-mono">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse-live" />
+              <span className="font-semibold text-zinc-700 dark:text-zinc-200">{diagrams.length}</span> charts ·{" "}
+              <span className="font-semibold text-zinc-700 dark:text-zinc-200">{totalSteps}</span> steps
+            </div>
+          </div>
+        </div>
+
+        {/* Search & Filter Toolbar */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-6">
+          <div className="relative w-full sm:w-80">
+            <svg
+              className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search flowcharts by name or keyword…"
+              className="w-full pl-9 pr-3.5 py-2 text-xs bg-white dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/80 rounded-xl text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-sky-500 shadow-2xs"
+            />
+          </div>
+
+          <div className="flex items-center gap-1.5 self-start sm:self-auto bg-zinc-100 dark:bg-zinc-800/80 p-1 rounded-xl border border-zinc-200 dark:border-zinc-700/60">
+            {(["all", "custom", "builtin"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setFilter(t)}
+                className={`px-3 py-1 text-xs font-semibold rounded-lg capitalize transition-colors ${
+                  filter === t
+                    ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-50 shadow-xs"
+                    : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+                }`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Diagram Cards Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {filteredDiagrams.map((d) => (
             <Link
               key={d.slug}
               href={`/diagram/${d.slug}`}
-              className="flex items-center gap-4 p-5 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl hover:border-emerald-500 hover:shadow-md transition-all group relative"
+              className="group relative flex flex-col p-5 bg-white dark:bg-zinc-800/80 border border-zinc-200/90 dark:border-zinc-700/80 rounded-2xl hover:border-sky-400 dark:hover:border-sky-500 hover:shadow-xl hover:-translate-y-0.5 transition-all duration-150 overflow-hidden"
             >
-              <div
-                className={`w-11 h-11 ${d.color || "bg-emerald-700"} rounded-lg flex items-center justify-center text-white font-bold text-sm shrink-0 shadow-sm`}
-              >
-                {d.title[0]?.toUpperCase()}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-[15px] font-semibold text-zinc-900 dark:text-zinc-100 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 transition-colors">
-                    {d.title}
-                  </span>
-                  {d.isCustom && (
-                    <span className="text-[9px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300">
-                      Custom
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-base shadow-sm shrink-0"
+                    style={{
+                      background: d.color?.startsWith("#")
+                        ? d.color
+                        : "linear-gradient(135deg, #0284c7, #4f46e5)",
+                    }}
+                  >
+                    {d.title[0]?.toUpperCase()}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-[15px] font-bold text-zinc-900 dark:text-zinc-100 group-hover:text-sky-600 dark:group-hover:text-sky-400 transition-colors line-clamp-1">
+                        {d.title}
+                      </h2>
+                      {d.isCustom && (
+                        <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-full bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-800 shrink-0">
+                          Custom
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[11px] text-zinc-400 font-mono">
+                      {d.nodeCount || 0} process steps
                     </span>
-                  )}
+                  </div>
                 </div>
-                <div className="text-[12px] text-zinc-500 dark:text-zinc-400 mt-0.5 line-clamp-1">
-                  {d.description || "Process workflow"}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="text-[11px] text-zinc-400 tabular-nums shrink-0 mr-1">{d.nodeCount} nodes</div>
 
-                {/* Edit / Rename Flowchart Button */}
-                <button
-                  type="button"
-                  onClick={(e) => handleOpenEdit(e, d)}
-                  title="Edit flowchart name & details"
-                  className="p-1.5 text-zinc-400 hover:text-emerald-600 dark:hover:text-emerald-400 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                  </svg>
-                </button>
-
-                {d.isCustom && (
+                {/* Edit & Archive Actions */}
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     type="button"
-                    onClick={(e) => handleArchive(e, d)}
-                    title="Archive flowchart (recoverable)"
-                    className="p-1.5 text-zinc-400 hover:text-amber-600 dark:hover:text-amber-400 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+                    onClick={(e) => handleOpenEdit(e, d)}
+                    title="Edit name & color"
+                    className="p-1.5 text-zinc-400 hover:text-sky-600 dark:hover:text-sky-400 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                      <path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
                     </svg>
                   </button>
-                )}
-                <svg className="w-4 h-4 text-zinc-300 dark:text-zinc-600 group-hover:text-emerald-500 transition-colors shrink-0 ml-1" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path d="M9 18l6-6-6-6" />
-                </svg>
+
+                  {d.isCustom && (
+                    <button
+                      type="button"
+                      onClick={(e) => handleArchive(e, d)}
+                      title="Archive flowchart"
+                      className="p-1.5 text-zinc-400 hover:text-amber-600 dark:hover:text-amber-400 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <p className="text-[12.5px] text-zinc-500 dark:text-zinc-400 line-clamp-2 leading-relaxed flex-1">
+                {d.description || "Interactive collaborative flowchart mapping the operational lifecycle."}
+              </p>
+
+              <div className="mt-4 pt-3 border-t border-zinc-100 dark:border-zinc-700/60 flex items-center justify-between text-[11px] text-zinc-400">
+                <span className="flex items-center gap-1 text-sky-600 dark:text-sky-400 font-semibold group-hover:translate-x-0.5 transition-transform">
+                  <span>Open Flowchart</span>
+                  <span>→</span>
+                </span>
+                <span>Click to launch editor</span>
               </div>
             </Link>
           ))}
-          {loading && (
-            <div className="text-center text-xs text-zinc-400 py-4">Syncing from cloud…</div>
-          )}
         </div>
 
-        {/* Archived (soft-deleted) flowcharts */}
+        {filteredDiagrams.length === 0 && !loading && (
+          <div className="py-16 text-center">
+            <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">No flowcharts found</p>
+            <p className="text-xs text-zinc-400 mt-1">Try clearing your search query or creating a new chart.</p>
+          </div>
+        )}
+
+        {/* Archived Section */}
         {archived.length > 0 && (
-          <div className="mt-8">
+          <div className="mt-12 pt-8 border-t border-zinc-200 dark:border-zinc-800">
             <button
               onClick={() => setShowArchived((s) => !s)}
-              className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+              className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
             >
               <svg
-                className={`w-3 h-3 transition-transform ${showArchived ? "rotate-90" : ""}`}
+                className={`w-3.5 h-3.5 transition-transform ${showArchived ? "rotate-90" : ""}`}
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2.5"
                 viewBox="0 0 24 24"
               >
-                <path d="M9 18l6-6-6-6" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
               </svg>
-              Archived ({archived.length})
+              <span>Archived Flowcharts ({archived.length})</span>
             </button>
 
             {showArchived && (
-              <div className="space-y-2 mt-3">
+              <div className="space-y-2 mt-4">
                 {archived.map((d) => (
                   <div
                     key={d.slug}
-                    className="flex items-center gap-4 p-4 bg-zinc-50 dark:bg-zinc-800/50 border border-dashed border-zinc-300 dark:border-zinc-700 rounded-xl"
+                    className="flex items-center justify-between p-4 bg-zinc-50 dark:bg-zinc-900/50 border border-dashed border-zinc-300 dark:border-zinc-700/80 rounded-xl"
                   >
-                    <div className={`w-9 h-9 ${d.color || "bg-zinc-500"} rounded-lg flex items-center justify-center text-white font-bold text-xs shrink-0 opacity-60`}>
-                      {d.title[0]?.toUpperCase()}
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 truncate">{d.title}</div>
+                      <div className="text-xs text-zinc-400 truncate">{d.description || "Archived process map"}</div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[14px] font-medium text-zinc-600 dark:text-zinc-300 truncate">{d.title}</div>
-                      <div className="text-[11px] text-zinc-400 truncate">{d.description || "Archived process"}</div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => handleRestore(e, d.slug)}
+                        className="px-3 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-800 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-colors"
+                      >
+                        Restore
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => handleDeleteForever(e, d.slug)}
+                        title="Delete permanently"
+                        className="p-1.5 text-zinc-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                        </svg>
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={(e) => handleRestore(e, d.slug)}
-                      className="px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/60 rounded-md hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-colors"
-                    >
-                      Restore
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => handleDeleteForever(e, d.slug)}
-                      title="Delete permanently"
-                      className="p-1.5 text-zinc-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                        <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
                   </div>
                 ))}
               </div>
@@ -298,15 +447,17 @@ export default function Home() {
 
         {/* Create Flowchart Modal */}
         {showModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
             <div className="w-full max-w-md bg-white dark:bg-zinc-800 rounded-2xl border border-zinc-200 dark:border-zinc-700 shadow-2xl p-6">
-              <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-1">Create New Flowchart</h2>
+              <h2 className="text-lg font-bold font-display text-zinc-900 dark:text-zinc-100 mb-1">
+                Create New Flowchart
+              </h2>
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-5">
-                It&apos;s instantly shared — teammates with the link edit it live.
+                Instantly collaborative — teammates with the URL can view and edit in real time.
               </p>
               <form onSubmit={handleCreate} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">
+                  <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
                     Flowchart Title *
                   </label>
                   <input
@@ -316,35 +467,35 @@ export default function Home() {
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
                     placeholder="e.g. Returns & Warranty Claims Flow"
-                    className="w-full px-3.5 py-2 text-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full px-3.5 py-2 text-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-500"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">
+                  <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
                     Description
                   </label>
                   <textarea
                     rows={3}
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    placeholder="Brief description of what this process covers..."
-                    className="w-full px-3.5 py-2 text-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    placeholder="Brief overview of what this process workflow encompasses..."
+                    className="w-full px-3.5 py-2 text-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-500"
                   />
                 </div>
                 <div className="flex justify-end gap-2 pt-3">
                   <button
                     type="button"
                     onClick={() => setShowModal(false)}
-                    className="px-4 py-2 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded-lg transition-colors"
+                    className="px-4 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded-xl transition-colors"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={creating}
-                    className="px-4 py-2 text-xs font-medium bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg transition-colors shadow-xs"
+                    className="px-4 py-2 text-xs font-semibold bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white rounded-xl transition-all shadow-md shadow-sky-500/20"
                   >
-                    {creating ? "Creating…" : "Create & Open Editor"}
+                    {creating ? "Creating…" : "Create & Launch Editor"}
                   </button>
                 </div>
               </form>
@@ -354,17 +505,17 @@ export default function Home() {
 
         {/* Edit Flowchart Details Modal */}
         {editingDiagram && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
             <div className="w-full max-w-md bg-white dark:bg-zinc-800 rounded-2xl border border-zinc-200 dark:border-zinc-700 shadow-2xl p-6">
-              <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
+              <h2 className="text-lg font-bold font-display text-zinc-900 dark:text-zinc-100 mb-1">
                 Edit Flowchart Details
               </h2>
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-5">
-                Rename this project or change its description and theme color.
+                Update project title, description, and theme accent.
               </p>
               <form onSubmit={handleSaveEdit} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">
+                  <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
                     Project Title *
                   </label>
                   <input
@@ -373,25 +524,23 @@ export default function Home() {
                     autoFocus
                     value={editTitle}
                     onChange={(e) => setEditTitle(e.target.value)}
-                    placeholder="Flowchart Title"
-                    className="w-full px-3.5 py-2 text-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full px-3.5 py-2 text-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-500"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">
+                  <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
                     Description
                   </label>
                   <textarea
                     rows={3}
                     value={editDesc}
                     onChange={(e) => setEditDesc(e.target.value)}
-                    placeholder="Brief description of what this process covers..."
-                    className="w-full px-3.5 py-2 text-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full px-3.5 py-2 text-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-xl text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1.5">
+                  <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
                     Theme Color
                   </label>
                   <div className="flex items-center gap-2 flex-wrap">
@@ -399,11 +548,11 @@ export default function Home() {
                       <button
                         key={c.id}
                         type="button"
-                        onClick={() => setEditColor(c.id)}
+                        onClick={() => setEditColor(c.fill)}
                         title={c.name}
                         className={`w-7 h-7 rounded-lg transition-transform ${
-                          editColor === c.id
-                            ? "ring-2 ring-offset-2 ring-emerald-500 ring-offset-white dark:ring-offset-zinc-800 scale-110 shadow-sm"
+                          editColor === c.fill
+                            ? "ring-2 ring-offset-2 ring-sky-500 scale-110 shadow-sm"
                             : "hover:scale-105 opacity-85 hover:opacity-100"
                         }`}
                         style={{ backgroundColor: c.fill }}
@@ -416,14 +565,14 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => setEditingDiagram(null)}
-                    className="px-4 py-2 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded-lg transition-colors"
+                    className="px-4 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded-xl transition-colors"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={savingEdit}
-                    className="px-4 py-2 text-xs font-medium bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg transition-colors shadow-xs"
+                    className="px-4 py-2 text-xs font-semibold bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white rounded-xl transition-all shadow-md shadow-sky-500/20"
                   >
                     {savingEdit ? "Saving…" : "Save Changes"}
                   </button>
@@ -432,7 +581,7 @@ export default function Home() {
             </div>
           </div>
         )}
-      </div>
+      </main>
     </div>
   );
 }
