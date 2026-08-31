@@ -55,11 +55,21 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const [user, setUser] = useState<Collaborator | null>(null);
   const [askName, setAskName] = useState(false);
 
-  // Initial state must be deterministic across server/client to avoid hydration mismatch;
-  // cache and cloud are loaded after mount in the effect below.
-  const [data, setData] = useState<FlowData>(() => getDefaultData(slug));
+  // Initial state: load from cache immediately if present in browser, else fallback to default
+  const [data, setData] = useState<FlowData>(() => {
+    if (typeof window !== "undefined") {
+      const cached = getCachedData(slug);
+      if (cached) return cached;
+    }
+    return getDefaultData(slug);
+  });
   const dataRef = useRef<FlowData>(data);
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return Boolean(getCachedData(slug));
+    }
+    return false;
+  });
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const selRef = useRef<string[]>([]);
@@ -232,6 +242,28 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     setProjectSubtitle(subtitle);
     setTempSubtitle(subtitle);
   }, [subtitle]);
+
+  /* -------------------------- document data load ------------------------ */
+  useEffect(() => {
+    let alive = true;
+    const cached = getCachedData(slug);
+    if (cached) {
+      dataRef.current = cached;
+      setData(cached);
+      setLoaded(true);
+    }
+    fetchCloudData(slug).then((cloud) => {
+      if (!alive) return;
+      if (cloud) {
+        dataRef.current = cloud;
+        setData(cloud);
+      }
+      setLoaded(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [slug]);
 
   /* ------------------------------ identity ----------------------------- */
   useEffect(() => {
@@ -2307,20 +2339,22 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
             }`}
             style={{ transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`, willChange: "transform" }}
           >
-            <Connections
-              nodes={data.nodes}
-              routes={routes}
-              sizes={sizes}
-              selectedId={selectedConn}
-              onSelect={selectConn}
-              onContextMenu={connContextMenu}
-              onEditLabel={openLabelEdit}
-              ghost={ghost}
-              onWaypointDown={readOnly ? undefined : onWaypointDown}
-              onWaypointRemove={readOnly ? undefined : removeWaypoint}
-              onSegmentDown={readOnly ? undefined : onSegmentDown}
-              onEndpointDown={readOnly ? undefined : onEndpointDown}
-            />
+            {loaded && (
+              <Connections
+                nodes={data.nodes}
+                routes={routes}
+                sizes={sizes}
+                selectedId={selectedConn}
+                onSelect={selectConn}
+                onContextMenu={connContextMenu}
+                onEditLabel={openLabelEdit}
+                ghost={ghost}
+                onWaypointDown={readOnly ? undefined : onWaypointDown}
+                onWaypointRemove={readOnly ? undefined : removeWaypoint}
+                onSegmentDown={readOnly ? undefined : onSegmentDown}
+                onEndpointDown={readOnly ? undefined : onEndpointDown}
+              />
+            )}
             {marquee && (
               <div
                 className="absolute z-[6] pointer-events-none"
@@ -2334,28 +2368,30 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
                 }}
               />
             )}
-            <div className="relative z-10">
-              {data.nodes.map((node) => (
-                <FlowNodeCard
-                  key={node.id}
-                  node={node}
-                  isSelected={selectedIds.includes(node.id)}
-                  isDropTarget={dropTarget === node.id}
-                  viewMode={viewMode}
-                  onMouseDown={(e) => onNodeMouseDown(e, node)}
-                  onDoubleClick={() => !readOnly && setEditNode(node)}
-                  onContextMenu={(e) => !readOnly && nodeContextMenu(e, node)}
-                  onPortMouseDown={(e, port) => onPortMouseDown(e, node, port)}
-                  onPortMouseUp={() => {}}
-                  onQuickAdd={readOnly ? undefined : handleQuickAdd}
-                  onUpdate={saveNode}
-                  onDelete={(id) => {
-                    select([id]);
-                    deleteSelection();
-                  }}
-                />
-              ))}
-            </div>
+            {loaded && (
+              <div className="relative z-10">
+                {data.nodes.map((node) => (
+                  <FlowNodeCard
+                    key={node.id}
+                    node={node}
+                    isSelected={selectedIds.includes(node.id)}
+                    isDropTarget={dropTarget === node.id}
+                    viewMode={viewMode}
+                    onMouseDown={(e) => onNodeMouseDown(e, node)}
+                    onDoubleClick={() => !readOnly && setEditNode(node)}
+                    onContextMenu={(e) => !readOnly && nodeContextMenu(e, node)}
+                    onPortMouseDown={(e, port) => onPortMouseDown(e, node, port)}
+                    onPortMouseUp={() => {}}
+                    onQuickAdd={readOnly ? undefined : handleQuickAdd}
+                    onUpdate={saveNode}
+                    onDelete={(id) => {
+                      select([id]);
+                      deleteSelection();
+                    }}
+                  />
+                ))}
+              </div>
+            )}
           </div>
 
           {loaded && (
@@ -2371,11 +2407,9 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
           )}
 
           {!loaded && (
-            <div
-              className="absolute inset-0 grid place-items-center text-[12px] z-20 pointer-events-none"
-              style={{ color: "var(--ui-text-faint)" }}
-            >
-              Loading diagram…
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/70 dark:bg-zinc-900/70 backdrop-blur-xs z-30 pointer-events-none animate-in fade-in duration-100">
+              <div className="w-5 h-5 border-2 border-sky-500 border-t-transparent rounded-full animate-spin mb-2" />
+              <span className="text-[11.5px] font-medium text-zinc-600 dark:text-zinc-400">Loading flowchart…</span>
             </div>
           )}
 
