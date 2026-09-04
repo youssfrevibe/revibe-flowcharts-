@@ -54,6 +54,26 @@ reset. When adding a destructive operation, call `snapshotNow` first.
   `return_external_stage` snake_case aliases, and the deprecated `stage` +
   `stageKind` pair into `internalStage` / `externalStage`.
 
+### What the two stage fields actually are
+
+They are not "a stage and a synonym" — they are two different OMS columns, and the
+UI names them verbatim so a card can be mapped onto the database without guessing:
+
+| Field | OMS column | Audience |
+|---|---|---|
+| `internalStage` | `claim_return_details.return_claim_stage` | ops team |
+| `externalStage` | `order_product_claims_new.stage` | the customer |
+
+The values differ too: `return_claim_stage` is unnumbered (`Under revision`), while
+`stage` is numbered (`18. Under revision`).
+
+**A card headline that names a stage must read `return_claim_stage = <value>`.** Bare
+`stage = <value>` is the trap: it reads as the *customer-facing* column, so the same
+diagram ends up describing two different things with one word. `DiagramStats` lints for
+it ("Wrong stage header") and `ai-schema.ts` forbids it in both AI prompts. The older
+`internal_stage` / `external_stage` spellings are dead — they survive only as import
+aliases in `migrateNodeFields`, never in new labels or UI.
+
 > Unknown properties are **deliberately preserved**. Imported Revibe JSON carries
 > app-specific extras (`newOmsFlow`, `oldAppStatus`, …) and nothing is dropped on
 > save. Do not add a whitelist-style sanitiser.

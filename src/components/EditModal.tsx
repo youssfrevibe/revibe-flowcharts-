@@ -286,10 +286,16 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
                 </div>
               </div>
 
-              {/* Stage lines — free-text internal and external names. Rendered on the
-                  card as `internal_stage = <value>` / `external_stage = <value>`. Leaving
-                  a field blank hides that line; leaving both blank hides the block. Sync
-                  button copies internal → external for the common case where both match. */}
+              {/* Stage lines — free-text internal and external names. These mirror two
+                  distinct OMS columns, and the field labels here name the columns verbatim
+                  so a reader can map a card straight onto the database:
+                    internal → claim_return_details.return_claim_stage
+                    external → order_product_claims_new.stage
+                  A card headline that names a stage must therefore read
+                  `return_claim_stage = <value>` — never `stage = <value>`, which would point
+                  at the customer-facing column instead. Leaving a field blank hides that
+                  line; leaving both blank hides the block. Match copies internal → external
+                  for the common case where both agree. */}
               <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-900/70 border border-zinc-200 dark:border-zinc-700/80 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <label className="block text-[10.5px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
@@ -324,25 +330,25 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-semibold uppercase text-zinc-400 mb-1 font-mono">
-                    internal_stage
+                  <label className="block text-[10px] font-semibold text-zinc-400 mb-1 font-mono">
+                    return_claim_stage <span className="text-[9px] tracking-wider">(INTERNAL)</span>
                   </label>
                   <input
                     value={internalStage}
                     onChange={(e) => setInternalStage(e.target.value)}
-                    placeholder="e.g. Send to LAB"
+                    placeholder="e.g. Send to LAB, Under revision"
                     className="w-full px-3.5 py-2 rounded-lg border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-900 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-semibold uppercase text-zinc-400 mb-1 font-mono">
-                    external_stage
+                  <label className="block text-[10px] font-semibold text-zinc-400 mb-1 font-mono">
+                    stage <span className="text-[9px] tracking-wider">(EXTERNAL)</span>
                   </label>
                   <input
                     value={externalStage}
                     onChange={(e) => setExternalStage(e.target.value)}
-                    placeholder="e.g. Expert revision"
+                    placeholder="e.g. 19. Expert revision"
                     className="w-full px-3.5 py-2 rounded-lg border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-900 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>

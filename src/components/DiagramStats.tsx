@@ -109,6 +109,15 @@ export default function DiagramStats({ nodes, connections, onClose, onFocusNode,
     const missingActor = processNodes.filter((n) => !n.actor);
     const missingStage = processNodes.filter((n) => !n.internalStage && !n.externalStage);
 
+    // Stage-naming rule: a headline that names a stage value must name the INTERNAL column
+    // (`return_claim_stage`). Bare `stage` is the customer-facing column in
+    // order_product_claims_new and must never head a card, and the older
+    // `internal_stage` / `return_internal_stage` spellings are dead. Anchored at the start of
+    // the label so a mid-sentence "stage" in prose does not trip the check.
+    const badStageLabel = nodes.filter((n) =>
+      /^\s*(stage|internal_stage|external_stage|return_internal_stage|return_external_stage)\s*=/i.test(n.label || ""),
+    );
+
     return {
       typeCounts,
       totalConns: connections.length,
@@ -121,6 +130,7 @@ export default function DiagramStats({ nodes, connections, onClose, onFocusNode,
       missingSLA,
       missingActor,
       missingStage,
+      badStageLabel,
     };
   }, [nodes, connections]);
 
@@ -244,6 +254,13 @@ export default function DiagramStats({ nodes, connections, onClose, onFocusNode,
                 count={stats.missingStage.length}
                 good={stats.missingStage.length === 0}
                 onClick={stats.missingStage.length > 0 ? () => onSelectNodes(stats.missingStage.map((n) => n.id)) : undefined}
+              />
+              <HealthRow
+                label="Wrong stage header"
+                desc="Card headline must read return_claim_stage ="
+                count={stats.badStageLabel.length}
+                good={stats.badStageLabel.length === 0}
+                onClick={stats.badStageLabel.length > 0 ? () => onSelectNodes(stats.badStageLabel.map((n) => n.id)) : undefined}
               />
             </div>
           </section>

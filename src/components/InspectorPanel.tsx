@@ -497,10 +497,10 @@ function NodeProps({
               />
             </div>
             <div>
-              <span className="text-[10px] block mb-1" style={{ color: "var(--ui-text-faint)" }}>Set Internal Stage for all</span>
+              <span className="text-[10px] block mb-1" style={{ color: "var(--ui-text-faint)" }}>Set return_claim_stage (INTERNAL) for all</span>
               <input
                 className="ui-field text-xs"
-                placeholder={shared((n) => n.internalStage) ?? "e.g. LAB_PROCESSING"}
+                placeholder={shared((n) => n.internalStage) ?? "e.g. Pending LAB collection"}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     onPatchNodes({ internalStage: (e.target as HTMLInputElement).value || undefined });
@@ -509,10 +509,10 @@ function NodeProps({
               />
             </div>
             <div>
-              <span className="text-[10px] block mb-1" style={{ color: "var(--ui-text-faint)" }}>Set External Stage for all</span>
+              <span className="text-[10px] block mb-1" style={{ color: "var(--ui-text-faint)" }}>Set stage (EXTERNAL) for all</span>
               <input
                 className="ui-field text-xs"
-                placeholder={shared((n) => n.externalStage) ?? "e.g. Under Revision"}
+                placeholder={shared((n) => n.externalStage) ?? "e.g. 18. Under revision"}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     onPatchNodes({ externalStage: (e.target as HTMLInputElement).value || undefined });
@@ -680,18 +680,18 @@ function NodeProps({
           />
           <input
             className="ui-field mt-1.5"
-            aria-label="Internal stage"
+            aria-label="return_claim_stage (internal)"
             disabled={readOnly}
             value={one.internalStage ?? ""}
-            placeholder="internal_stage"
+            placeholder="return_claim_stage (INTERNAL)"
             onChange={(e) => onPatchNodes({ internalStage: e.target.value || undefined })}
           />
           <input
             className="ui-field mt-1.5"
-            aria-label="External stage"
+            aria-label="stage (external)"
             disabled={readOnly}
             value={one.externalStage ?? ""}
-            placeholder="external_stage"
+            placeholder="stage (EXTERNAL)"
             onChange={(e) => onPatchNodes({ externalStage: e.target.value || undefined })}
           />
           {!readOnly && (

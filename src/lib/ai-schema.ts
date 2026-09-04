@@ -37,8 +37,10 @@ const FIELD_REFERENCE = `NODE FIELDS (all optional except type/label):
 - "detail": longer explanation of what happens at this step.
 - "actor": who performs the step — ${list(ACTORS)}. "revibe" = our team, "seller" = seller/supplier,
   "system" = automated, "carrier" = third party/carrier/lab. Set this whenever it is knowable.
-- "internalStage": the stage name the team tracks internally (e.g. "Pending LAB collection"). Free text.
-- "externalStage": the stage name shown to the customer (e.g. "Under QC"). Free text.
+- "internalStage": the OMS column \`return_claim_stage\` — the stage the team tracks internally
+  (e.g. "Pending LAB collection", "Invalid claim", "Under revision"). Free text.
+- "externalStage": the OMS column \`stage\` — the stage shown to the customer
+  (e.g. "3. Under QC", "19. Expert revision"). Free text.
 - "sla": the time target for the step (e.g. "24h", "2 business days").
 - "inputs": what the step needs to begin. "outputs": what it produces.
 - "tools": array of systems/tools used (e.g. ["Shopify", "Zendesk"]).
@@ -58,7 +60,17 @@ CONNECTION FIELDS:
 RULES:
 - Every "decision" node should have at least two outgoing connections (typically one "cyes" and one "cno"), each labelled.
 - The graph must be connected and flow from the start node to at least one end state ("ok" or "fail").
-- Do not set x/y — positions are handled by the app's auto-layout.`;
+- Do not set x/y — positions are handled by the app's auto-layout.
+- STAGE NAMING (strict). When a node's headline names a stage value, write it as
+  \`return_claim_stage = <value>\` — the internal column. NEVER write a label as
+  \`stage = <value>\`, \`Stage = <value>\`, \`internal_stage = ...\` or
+  \`return_internal_stage = ...\`; \`stage\` on its own is the customer-facing column and must
+  not name a card. Every stage-bearing card in a flow uses the identical
+  \`return_claim_stage = \` prefix so the set reads consistently.
+  Labels naming any OTHER column keep that column's own name verbatim — e.g.
+  \`pickup_shipment_status = Delivered\`, \`refund_type = Original Payment Method\`,
+  \`credit_from_supplier_status = To be credited\`.
+  The value after "=" should equal the node's "internalStage".`;
 
 export const GENERATE_SYSTEM_PROMPT = `You are a process-mapping assistant. Turn the user's description of a business or operational process into a flowchart as STRICT JSON.
 
@@ -121,8 +133,8 @@ export function describeFlow(data: FlowData, title?: string): string {
     const parts = [`[${n.id}]`, `type=${n.type}`, `label="${clip(n.label, 120)}"`];
     if (n.detail) parts.push(`detail="${clip(n.detail, 300)}"`);
     if (n.actor) parts.push(`actor=${n.actor}`);
-    if (n.internalStage) parts.push(`internal_stage="${clip(n.internalStage, 80)}"`);
-    if (n.externalStage) parts.push(`external_stage="${clip(n.externalStage, 80)}"`);
+    if (n.internalStage) parts.push(`return_claim_stage="${clip(n.internalStage, 80)}"`);
+    if (n.externalStage) parts.push(`stage="${clip(n.externalStage, 80)}"`);
     if (n.sla) parts.push(`sla="${clip(n.sla, 40)}"`);
     if (n.inputs) parts.push(`inputs="${clip(n.inputs, 120)}"`);
     if (n.outputs) parts.push(`outputs="${clip(n.outputs, 120)}"`);
