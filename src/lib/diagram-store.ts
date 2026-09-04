@@ -222,9 +222,23 @@ export function getCachedDiagrams(): DiagramMetadata[] {
 
 function mergeList(cloud: DiagramMetadata[]): DiagramMetadata[] {
   const cloudBySlug = new Map(cloud.map((d) => [d.slug, d]));
+  // The cloud row wins for everything the user can edit. This used to keep the
+  // hardcoded BUILTIN_DIAGRAMS title/description/color and take only nodeCount and
+  // updatedAt from the cloud, which silently reverted every rename of a builtin: the
+  // POST reached Supabase, then the next list fetch overwrote it again. The constants
+  // are a seed and an offline fallback, not the source of truth. `isCustom` still comes
+  // from BUILTIN_SLUGS so a renamed builtin keeps its grouping and stays unarchivable.
   const builtin = BUILTIN_DIAGRAMS.map((b) => {
     const c = cloudBySlug.get(b.slug);
-    return c ? { ...b, nodeCount: c.nodeCount ?? b.nodeCount, updatedAt: c.updatedAt } : b;
+    if (!c) return b;
+    return {
+      ...b,
+      title: c.title || b.title,
+      description: c.description ?? b.description,
+      color: c.color || b.color,
+      nodeCount: c.nodeCount ?? b.nodeCount,
+      updatedAt: c.updatedAt,
+    };
   });
   const custom = cloud
     .filter((d) => !BUILTIN_SLUGS.has(d.slug))
@@ -352,8 +366,25 @@ export async function updateDiagramMetadata(
     } catch {}
   }
 
-  const currentData = getCachedData(slug) || getDefaultData(slug);
-  return saveToCloud(slug, currentData, updatedMeta);
+  // Metadata-only PATCH. This used to call saveToCloud, which writes the whole document,
+  // with `getCachedData(slug) || getDefaultData(slug)` as the nodes — so renaming a
+  // diagram from the list pushed whatever that browser had cached (or the 24-node builtin
+  // starter, if it had never opened it) over the live document. Renames must never carry
+  // node data; the editor is the only writer of nodes.
+  try {
+    const res = await fetch(`/api/flowcharts/${slug}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: updatedMeta.title,
+        description: updatedMeta.description,
+        color: updatedMeta.color,
+      }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 export async function resetToDefault(slug: string): Promise<FlowData> {
