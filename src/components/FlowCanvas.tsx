@@ -13,7 +13,7 @@ import {
   updateDiagramMetadata,
 } from "@/lib/diagram-store";
 import { applyOp, connId, newConnId } from "@/lib/ops";
-import { computeBounds, autoLayout, resolveOverlaps, Size } from "@/lib/graph";
+import { computeBounds, autoLayout, resolveOverlaps, sizeOf, Size } from "@/lib/graph";
 import { LayoutPrefs, loadLayoutPrefs, saveLayoutPrefs, DEFAULT_PREFS } from "@/lib/layout-prefs";
 import { buildDiagramSVG } from "@/lib/export-svg";
 import { NODE_COLOR_PRESETS } from "@/lib/node-colors";
@@ -40,7 +40,6 @@ import FindReplaceBar from "./FindReplaceBar";
 import DiagramStats from "./DiagramStats";
 import { applyAIEdits, describeCounts } from "@/lib/ai-edit";
 import { AIEditOp } from "@/lib/ai-schema";
-import { listTemplates, saveTemplate, deleteTemplate, templateToNode, NodeTemplate } from "@/lib/templates";
 
 /** Set by the importer so the first canvas to open a deployed flowchart arranges it. */
 export const ARRANGE_ON_OPEN_KEY = "flow_arrange_on_open";
@@ -114,7 +113,6 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [showHandover, setShowHandover] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
-  const [showExport, setShowExport] = useState(false);
   const [showAI, setShowAI] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -149,7 +147,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     const right = left + viewport.w / zoom + margin * 2;
     const bottom = top + viewport.h / zoom + margin * 2;
     return data.nodes.filter((n) => {
-      const s = sizes.get(n.id) || { w: 210, h: 84 };
+      const s = sizeOf(n.id, sizes);
       return n.x + s.w > left && n.x < right && n.y + s.h > top && n.y < bottom;
     });
   }, [arranging, data.nodes, pan, zoom, viewport, sizes]);
@@ -363,11 +361,15 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     }, 650);
   }, [slug, projectTitle, projectSubtitle]);
 
+  // Same guard as `commit`. Today every caller sits behind a readOnly-guarded pointer
+  // handler, so this is belt-and-braces — but view mode is about to become a first-class
+  // chrome rather than a prop, and a drag frame must not rewrite the document either.
   const setTransient = useCallback((producer: (d: FlowData) => FlowData) => {
+    if (readOnly) return;
     const next = producer(dataRef.current);
     dataRef.current = next;
     setData(next);
-  }, []);
+  }, [readOnly]);
 
   const commit = useCallback(
     (producer: (d: FlowData) => FlowData, ops: Op[]) => {
@@ -703,7 +705,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       if (readOnly) return;
       const sourceNode = dataRef.current.nodes.find((n) => n.id === fromId);
       if (!sourceNode) return;
-      const s = sizes.get(fromId) || { w: 210, h: 84 };
+      const s = sizeOf(fromId, sizes);
       let newX = sourceNode.x;
       let newY = sourceNode.y;
       let toPort: Port = "left";
@@ -999,6 +1001,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
 
   const nudge = useCallback(
     (dx: number, dy: number) => {
+      if (readOnly) return;
       const ids = selRef.current;
       if (!ids.length) return;
       const set = new Set(ids);
@@ -1014,10 +1017,11 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       scheduleSave();
       bc({ t: "nodes.move", origin: uid, moves: ids.map((id) => { const n = nodes.find((x) => x.id === id)!; return { id, x: n.x, y: n.y }; }) });
     },
-    [record, scheduleSave, bc, uid]
+    [record, scheduleSave, bc, uid, readOnly]
   );
 
   const undo = useCallback(() => {
+    if (readOnly) return;
     const h = histRef.current;
     if (!h.past.length) return;
     const prev = h.past.pop()!;
@@ -1027,9 +1031,10 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     scheduleSave();
     bc({ t: "doc.replace", origin: uid, nodes: prev.nodes, connections: prev.connections });
     setHistVer((v) => v + 1);
-  }, [scheduleSave, bc, uid]);
+  }, [scheduleSave, bc, uid, readOnly]);
 
   const redo = useCallback(() => {
+    if (readOnly) return;
     const h = histRef.current;
     if (!h.future.length) return;
     const next = h.future.pop()!;
@@ -1039,7 +1044,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     scheduleSave();
     bc({ t: "doc.replace", origin: uid, nodes: next.nodes, connections: next.connections });
     setHistVer((v) => v + 1);
-  }, [scheduleSave, bc, uid]);
+  }, [scheduleSave, bc, uid, readOnly]);
 
   const setConnField = useCallback(
     (id: string, patch: Partial<FlowConnection>) => {
@@ -1134,7 +1139,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       const anchorNode = dataRef.current.nodes.find(
         (n) => n.id === (ed.end === "from" ? dataRef.current.connections.find((c) => connId(c) === ed.connId)?.to : dataRef.current.connections.find((c) => connId(c) === ed.connId)?.from)
       );
-      const asz = anchorNode ? sizes.get(anchorNode.id) || { w: 210, h: 84 } : null;
+      const asz = anchorNode ? sizeOf(anchorNode.id, sizes) : null;
       setGhost({
         x1: anchorNode && asz ? anchorNode.x + asz.w / 2 : w.x,
         y1: anchorNode && asz ? anchorNode.y + asz.h / 2 : w.y,
@@ -1325,7 +1330,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       if (m && (m.w > 4 || m.h > 4)) {
         const hits = dataRef.current.nodes
           .filter((n) => {
-            const s = sizes.get(n.id) || { w: 210, h: 84 };
+            const s = sizeOf(n.id, sizes);
             return n.x + s.w >= m.x && n.x <= m.x + m.w && n.y + s.h >= m.y && n.y <= m.y + m.h;
           })
           .map((n) => n.id);
@@ -1684,7 +1689,6 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       if (showStats) { setShowStats(false); return; }
       setCtxMenu(null);
       setShowHelp(false);
-      setShowExport(false);
       select([]);
       selectConn(null);
       return;
@@ -1803,7 +1807,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
 
   const onPortMouseDown = (e: React.MouseEvent, node: FlowNode, port: string) => {
     if (readOnly) return;
-    const s = sizes.get(node.id) || { w: 210, h: 84 };
+    const s = sizeOf(node.id, sizes);
     const pos =
       port === "top"
         ? { x: node.x + s.w / 2, y: node.y }
@@ -1899,8 +1903,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       const fn = dataRef.current.nodes.find((n) => n.id === c.from);
       const tn = dataRef.current.nodes.find((n) => n.id === c.to);
       if (!fn || !tn) return;
-      const fs = sizes.get(fn.id) || { w: 210, h: 84 };
-      const ts = sizes.get(tn.id) || { w: 210, h: 84 };
+      const fs = sizeOf(fn.id, sizes);
+      const ts = sizeOf(tn.id, sizes);
       const mx = (fn.x + fs.w / 2 + tn.x + ts.w / 2) / 2;
       const my = (fn.y + fs.h / 2 + tn.y + ts.h / 2) / 2;
       const { pan, zoom } = viewRef.current;
@@ -1962,7 +1966,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     (id: string) => {
       const n = dataRef.current.nodes.find((x) => x.id === id);
       if (!n) return;
-      const sz = sizes.get(id) || { w: 210, h: 84 };
+      const sz = sizeOf(id, sizes);
       recenterWorld(n.x + sz.w / 2, n.y + sz.h / 2);
       select([id]);
     },
@@ -1981,7 +1985,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       const set = new Set(ids);
       const items = dataRef.current.nodes
         .filter((n) => set.has(n.id))
-        .map((n) => ({ n, s: sizes.get(n.id) || { w: 210, h: 84 } }));
+        .map((n) => ({ n, s: sizeOf(n.id, sizes) }));
 
       const moves = new Map<string, { x: number; y: number }>();
       const put = (id: string, x: number, y: number) => moves.set(id, { x: Math.round(x), y: Math.round(y) });
@@ -2213,12 +2217,10 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const doExportJSON = () => {
     const blob = new Blob([JSON.stringify(dataRef.current, null, 2)], { type: "application/json" });
     triggerDownload(blob, `${exportFilename || slug}.json`);
-    setShowExport(false);
   };
   const doExportSVG = () => {
     const { svg } = buildDiagramSVG(dataRef.current.nodes, dataRef.current.connections, sizes);
     triggerDownload(new Blob([svg], { type: "image/svg+xml" }), `${slug}.svg`);
-    setShowExport(false);
   };
   const doExportPNG = () => {
     const { svg, width, height } = buildDiagramSVG(dataRef.current.nodes, dataRef.current.connections, sizes);
@@ -2238,7 +2240,6 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       }, "image/png");
     };
     img.src = url;
-    setShowExport(false);
   };
   const triggerDownload = (blob: Blob, name: string) => {
     const url = URL.createObjectURL(blob);
@@ -2331,33 +2332,6 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     [commit, readOnly, uid]
   );
 
-  const addFromTemplate = useCallback(
-    (tpl: NodeTemplate) => {
-      if (readOnly) return;
-      const r = cwRef.current!.getBoundingClientRect();
-      const { pan, zoom } = viewRef.current;
-      const pos = { x: (r.width / 2 - pan.x) / zoom - 105, y: (r.height / 2 - pan.y) / zoom - 42 };
-      const partial = templateToNode(tpl);
-      const n: FlowNode = {
-        id: generateNodeId(),
-        type: partial.type || "step",
-        x: snapVal(pos.x, snap),
-        y: snapVal(pos.y, snap),
-        label: partial.label || "Template Step",
-        detail: partial.detail || "",
-        actor: partial.actor,
-        sla: partial.sla,
-        internalStage: partial.internalStage,
-        externalStage: partial.externalStage,
-        color: partial.color,
-        tools: partial.tools,
-      };
-      commit((prev) => ({ ...prev, nodes: [...prev.nodes, n] }), [{ t: "node.upsert", origin: uid, node: n }]);
-      select([n.id]);
-    },
-    [commit, select, snap, uid, readOnly]
-  );
-
   const loadParsedJSON = useCallback(
     (content: string) => {
       try {
@@ -2398,6 +2372,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   };
 
   const handleReset = async () => {
+    if (readOnly) return;
     if (!window.confirm("Reset this flowchart to its default template? This affects everyone and cannot be undone.")) return;
     snapshotNow("Before reset");
     const d = await resetToDefault(slug);
@@ -2446,6 +2421,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   // Restore a version snapshot into the live document (broadcast to peers).
   const restoreVersion = useCallback(
     (restored: FlowData) => {
+      if (readOnly) return;
       record(dataRef.current);
       dataRef.current = restored;
       setData(restored);
@@ -2454,7 +2430,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       setShowHistory(false);
       setTimeout(() => fitView(), 60);
     },
-    [record, scheduleSave, bc, uid, fitView]
+    [record, scheduleSave, bc, uid, fitView, readOnly]
   );
 
   const copyViewLink = useCallback(() => {

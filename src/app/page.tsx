@@ -35,8 +35,6 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "custom" | "builtin">("all");
-  const [isDraggingFile, setIsDraggingFile] = useState(false);
-  const fileInputRef = useState<HTMLInputElement | null>(null);
 
   // Paste-JSON deploy
   const [showPaste, setShowPaste] = useState(false);
