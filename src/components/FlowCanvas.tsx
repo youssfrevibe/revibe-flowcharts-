@@ -2,7 +2,8 @@
 
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import { useCanvasStore } from "@/lib/store";
-import { FlowNode, FlowConnection, FlowData, NodeType, ConnType, Op, Collaborator, Port, TextPosition, Pt, Actor } from "@/lib/types";
+import { FlowNode, FlowConnection, FlowData, NodeType, ConnType, Op, Collaborator, Port, TextPosition, Pt, Actor, DetailLevel } from "@/lib/types";
+import { atLevel, populatedLevels, mergeNodes, mergeConnections, DEFAULT_LEVEL } from "@/lib/levels";
 import {
   getDefaultData,
   getCachedData,
@@ -115,6 +116,39 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   // routing, layout, fit-to-view, export and the minimap all pick up frozen geometry
   // without a single call site changing.
   const sizes = useMemo(() => effectiveSizes(data.nodes, measured), [data.nodes, measured]);
+
+  // Which detail level is on screen. Levels filter one document rather than splitting it
+  // into three (see lib/levels.ts), so a file authored before levels existed has content
+  // at level 3 alone — hence that default, and hence `availableLevels`: offering an empty
+  // "The shape" would just look like the app was broken.
+  const [level, setLevel] = useState<DetailLevel>(DEFAULT_LEVEL);
+  const availableLevels = useMemo(() => populatedLevels(data), [data]);
+  // Strictly what gets rendered, routed and fitted. Every mutation still runs against the
+  // whole document through `dataRef` / `commit`, so editing at one level can never drop
+  // the others — that is what makes switching levels non-destructive.
+  const view = useMemo(() => atLevel(data, level), [data, level]);
+
+  // Snap to a level that has content. Without this, opening a document whose upper levels
+  // have not been authored yet lands on a blank canvas with no obvious way back.
+  useEffect(() => {
+    if (availableLevels.length && !availableLevels.includes(level)) {
+      setLevel(availableLevels[availableLevels.length - 1]);
+    }
+  }, [availableLevels, level]);
+
+  // Mirror of `level` for event handlers, assigned during render like the other mirrors
+  // in this file. Using a ref rather than a dependency keeps a level switch from
+  // re-creating all ~30 mutation callbacks.
+  const levelRef = useRef(level);
+  levelRef.current = level;
+
+  /** The current level's subgraph, read from the synchronous document.
+   *
+   * Anything that acts on "all nodes" — arrange, fix-overlaps, fit, select-all,
+   * auto-connect, export — has to go through this. Reading `dataRef.current` directly
+   * would move, frame, select or export steps belonging to a level the user cannot see,
+   * and auto-connect would happily chain a level-1 summary to a level-3 detail step. */
+  const currentScope = useCallback(() => atLevel(dataRef.current, levelRef.current), []);
   const [editNode, setEditNode] = useState<FlowNode | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [showHandover, setShowHandover] = useState(false);
@@ -146,17 +180,17 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const visibleNodes = useMemo(() => {
     // While an arrange is pending every card has to stay mounted, or the ones off-screen
     // never get measured and the layout falls back to guessed dimensions.
-    if (arranging || data.nodes.length <= CULL_THRESHOLD || !viewport.w || !viewport.h) return data.nodes;
+    if (arranging || view.nodes.length <= CULL_THRESHOLD || !viewport.w || !viewport.h) return view.nodes;
     const margin = CULL_MARGIN / zoom;
     const left = -pan.x / zoom - margin;
     const top = -pan.y / zoom - margin;
     const right = left + viewport.w / zoom + margin * 2;
     const bottom = top + viewport.h / zoom + margin * 2;
-    return data.nodes.filter((n) => {
+    return view.nodes.filter((n) => {
       const s = sizeOf(n.id, sizes);
       return n.x + s.w > left && n.x < right && n.y + s.h > top && n.y < bottom;
     });
-  }, [arranging, data.nodes, pan, zoom, viewport, sizes]);
+  }, [arranging, view.nodes, pan, zoom, viewport, sizes]);
   // Both rails start hidden: most visits to a flowchart are to read it, not to edit it, so
   // the diagram gets the whole window until you ask for the editing tools. The choice is
   // remembered, so anyone who does edit keeps their panels open next time.
@@ -651,7 +685,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
 
   const computeFit = useCallback(
     (subset?: FlowNode[]) => {
-      const ns = subset && subset.length ? subset : dataRef.current.nodes;
+      const ns = subset && subset.length ? subset : currentScope().nodes;
       const b = computeBounds(ns, sizes);
       if (!b || !cwRef.current) return;
       const r = cwRef.current.getBoundingClientRect();
@@ -727,6 +761,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         y: snapVal(pos.y, snap),
         label: labels[type],
         detail: "",
+        // Land on the level being viewed, or the new step vanishes the moment it is made.
+        level: levelRef.current,
       };
       commit((prev) => ({ ...prev, nodes: [...prev.nodes, n] }), [{ t: "node.upsert", origin: uid, node: n }]);
       select([n.id]);
@@ -767,12 +803,14 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         y: snapVal(newY, snap),
         label: targetType === "decision" ? "Next Decision?" : "Next Step",
         detail: "",
+        level: levelRef.current,
       };
 
       const newConn: FlowConnection = {
         id: newConnId(),
         from: fromId,
         to: newNodeId,
+        level: levelRef.current,
         fromPort,
         toPort,
         label: sourceNode.type === "decision" && fromPort === "right" ? "Yes" : sourceNode.type === "decision" && fromPort === "bottom" ? "No" : "",
@@ -913,7 +951,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         await frame();
         await frame();
 
-        const conns = dataRef.current.connections.map((c) => {
+        const scope = currentScope();
+        const relaid = scope.connections.map((c) => {
           if (c.fromPort === undefined && c.toPort === undefined && c.waypoints === undefined) return c;
           const { fromPort, toPort, waypoints, ...rest } = c;
           void fromPort;
@@ -921,16 +960,20 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
           void waypoints;
           return rest;
         });
-        const laid = autoLayout(dataRef.current.nodes, conns, sizesRef.current, layoutPrefsRef.current);
-        commit(() => ({ nodes: laid, connections: conns }), [
-          { t: "doc.replace", origin: uid, nodes: laid, connections: conns },
+        const laid = autoLayout(scope.nodes, relaid, sizesRef.current, layoutPrefsRef.current);
+        // Splice back into the whole document. `doc.replace` swaps everything, so
+        // committing `laid` alone would delete every node on the levels we did not lay out.
+        const nodes = mergeNodes(dataRef.current.nodes, laid);
+        const connections = mergeConnections(dataRef.current.connections, relaid);
+        commit(() => ({ nodes, connections }), [
+          { t: "doc.replace", origin: uid, nodes, connections },
         ]);
       } finally {
         setArranging(false);
       }
       setTimeout(() => fitView(), 80);
     },
-    [commit, fitView, uid]
+    [commit, fitView, uid, currentScope]
   );
 
   // A flowchart deployed from the home page (uploaded file or pasted JSON) arrives with
@@ -950,15 +993,16 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     try {
       localStorage.removeItem(ARRANGE_ON_OPEN_KEY);
     } catch {}
-    void measureThenLayout(dataRef.current.nodes.map((n) => n.id));
+    void measureThenLayout(currentScope().nodes.map((n) => n.id));
   }, [docSettled, readOnly, slug, measureThenLayout]);
 
   const runAutoLayout = useCallback(() => {
-    const laid = autoLayout(dataRef.current.nodes, dataRef.current.connections, sizes, layoutPrefsRef.current);
+    const scope = currentScope();
+    const laid = autoLayout(scope.nodes, scope.connections, sizes, layoutPrefsRef.current);
     // Drop hand-set ports AND hand-drawn routes so each pathway picks the natural side and
     // shape for the NEW layout. Waypoints are absolute world positions, so after every node
     // has moved they would drag pathways back across the fresh arrangement.
-    const conns = dataRef.current.connections.map((c) => {
+    const relaid = scope.connections.map((c) => {
       if (c.fromPort === undefined && c.toPort === undefined && c.waypoints === undefined) return c;
       const { fromPort, toPort, waypoints, ...rest } = c;
       void fromPort;
@@ -966,21 +1010,25 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       void waypoints;
       return rest;
     });
-    commit(() => ({ nodes: laid, connections: conns }), [
-      { t: "doc.replace", origin: uid, nodes: laid, connections: conns },
+    // Merge, don't replace — see mergeNodes. Other levels were not laid out.
+    const nodes = mergeNodes(dataRef.current.nodes, laid);
+    const connections = mergeConnections(dataRef.current.connections, relaid);
+    commit(() => ({ nodes, connections }), [
+      { t: "doc.replace", origin: uid, nodes, connections },
     ]);
     setTimeout(() => fitView(), 60);
-  }, [commit, sizes, uid, fitView]);
+  }, [commit, sizes, uid, fitView, currentScope]);
 
   // Nudge only overlapping nodes apart, preserving the current arrangement.
   const runFixOverlaps = useCallback(() => {
     const gap = Math.min(layoutPrefsRef.current.secondaryGap, layoutPrefsRef.current.primaryGap) * 0.5 + layoutPrefsRef.current.margin;
-    const fixed = resolveOverlaps(dataRef.current.nodes, sizes, gap);
-    commit((prev) => ({ ...prev, nodes: fixed }), [
-      { t: "doc.replace", origin: uid, nodes: fixed, connections: dataRef.current.connections },
+    const fixed = resolveOverlaps(currentScope().nodes, sizes, gap);
+    const nodes = mergeNodes(dataRef.current.nodes, fixed);
+    commit((prev) => ({ ...prev, nodes }), [
+      { t: "doc.replace", origin: uid, nodes, connections: dataRef.current.connections },
     ]);
     setTimeout(() => fitView(), 60);
-  }, [commit, sizes, uid, fitView]);
+  }, [commit, sizes, uid, fitView, currentScope]);
 
   const chainSelectedNodes = useCallback(() => {
     if (readOnly || selRef.current.length < 2) return;
@@ -996,6 +1044,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
           id: newConnId(),
           from: fromId,
           to: toId,
+          level: levelRef.current,
           label: sorted[i].type === "decision" ? "Yes" : "",
           type: sorted[i].type === "decision" ? "cyes" : "",
         });
@@ -1010,8 +1059,10 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   }, [commit, readOnly, uid]);
 
   const autoConnectAllNodes = useCallback(() => {
-    if (readOnly || dataRef.current.nodes.length < 2) return;
-    const sorted = [...dataRef.current.nodes].sort((a, b) => (layoutPrefsRef.current.direction === "TB" ? a.y - b.y : a.x - b.x));
+    if (readOnly) return;
+    const scope = currentScope();
+    if (scope.nodes.length < 2) return;
+    const sorted = [...scope.nodes].sort((a, b) => (layoutPrefsRef.current.direction === "TB" ? a.y - b.y : a.x - b.x));
     const newConns: FlowConnection[] = [];
     for (let i = 0; i < sorted.length - 1; i++) {
       const fromId = sorted[i].id;
@@ -1022,6 +1073,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
           id: newConnId(),
           from: fromId,
           to: toId,
+          level: levelRef.current,
           label: sorted[i].type === "decision" ? "Yes" : "",
           type: sorted[i].type === "decision" ? "cyes" : "",
         });
@@ -1106,8 +1158,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   // routing reads — a node drag re-renders every frame, and re-solving every route (each of
   // which may run an A* search) on each of those frames was the main source of drag lag.
   const routes = useMemo(
-    () => computeRoutes(data.nodes, data.connections, sizes, { fast: interacting }),
-    [data.nodes, data.connections, sizes, interacting]
+    () => computeRoutes(view.nodes, view.connections, sizes, { fast: interacting }),
+    [view.nodes, view.connections, sizes, interacting]
   );
   const routeById = useMemo(() => new Map(routes.map((r) => [r.id, r])), [routes]);
 
@@ -1344,6 +1396,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
           id: newConnId(),
           from: fromId,
           to: targetId,
+          level: levelRef.current,
           label: "",
           type: "",
           fromPort: connectRef.current.fromPort,
@@ -1564,7 +1617,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     }
     if (mod && k === "a") {
       e.preventDefault();
-      select(dataRef.current.nodes.map((n) => n.id));
+      select(currentScope().nodes.map((n) => n.id));
       return;
     }
     if (mod && k === "c") {
@@ -2254,11 +2307,13 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     triggerDownload(blob, `${exportFilename || slug}.json`);
   };
   const doExportSVG = () => {
-    const { svg } = buildDiagramSVG(dataRef.current.nodes, dataRef.current.connections, sizes);
+    const scope = currentScope();
+    const { svg } = buildDiagramSVG(scope.nodes, scope.connections, sizes);
     triggerDownload(new Blob([svg], { type: "image/svg+xml" }), `${slug}.svg`);
   };
   const doExportPNG = () => {
-    const { svg, width, height } = buildDiagramSVG(dataRef.current.nodes, dataRef.current.connections, sizes);
+    const scope = currentScope();
+    const { svg, width, height } = buildDiagramSVG(scope.nodes, scope.connections, sizes);
     const scale = 2;
     const img = new Image();
     const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
@@ -2287,7 +2342,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
 
   const copyImageToClipboard = useCallback(async () => {
     try {
-      const { svg, width, height } = buildDiagramSVG(dataRef.current.nodes, dataRef.current.connections, sizes);
+      const scope = currentScope();
+    const { svg, width, height } = buildDiagramSVG(scope.nodes, scope.connections, sizes);
       const scale = 2;
       const img = new Image();
       const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
@@ -2482,7 +2538,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
 
   /* ------------------------------- render ------------------------------ */
   const selectedEdge = selectedConn ? routeById.get(selectedConn) : undefined;
-  const selectedNodes = data.nodes.filter((n) => selectedIds.includes(n.id));
+  const selectedNodes = view.nodes.filter((n) => selectedIds.includes(n.id));
 
   return (
     <div className="flex flex-col h-screen overflow-hidden" style={{ background: "var(--ui-canvas)" }}>
@@ -2537,8 +2593,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
             windows so the canvas keeps its width on a laptop screen. */}
         {showLeft && (
           <LayersPanel
-            nodes={data.nodes}
-            connections={data.connections}
+            nodes={view.nodes}
+            connections={view.connections}
             selectedIds={selectedIds}
             selectedConn={selectedConn}
             readOnly={readOnly}
@@ -2609,7 +2665,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
           >
             {loaded && (
               <Connections
-                nodes={data.nodes}
+                nodes={view.nodes}
                 routes={routes}
                 sizes={sizes}
                 selectedId={selectedConn}
@@ -2664,7 +2720,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
 
           {loaded && (
             <Minimap
-              nodes={data.nodes}
+              nodes={view.nodes}
               sizes={sizes}
               pan={pan}
               zoom={zoom}
@@ -2726,7 +2782,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         {/* Right rail — properties for whatever is selected. */}
         {showRight && (
           <InspectorPanel
-            nodes={data.nodes}
+            nodes={view.nodes}
             selected={selectedNodes}
             conn={selectedEdge?.conn ?? null}
             readOnly={readOnly}
@@ -2836,7 +2892,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       <CommandPalette
         isOpen={showCommandPalette}
         onClose={() => setShowCommandPalette(false)}
-        nodes={data.nodes}
+        nodes={view.nodes}
         onSelectNode={(id) => {
           select([id]);
           focusNode(id);
@@ -2872,8 +2928,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
 
       {showStats && (
         <DiagramStats
-          nodes={data.nodes}
-          connections={data.connections}
+          nodes={view.nodes}
+          connections={view.connections}
           onClose={() => setShowStats(false)}
           onFocusNode={focusNode}
           onSelectNodes={select}

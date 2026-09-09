@@ -39,12 +39,24 @@ A Sugiyama-style layered layout, the same family draw.io uses. Five stages:
 If you change the layering, verify on a **cyclic** graph. An acyclic test will pass
 either way.
 
-### Measured sizes are required
+### Sizes are required
 
-`autoLayout` reads `sizes` for every footprint. Unmeasured nodes fall back to
-`DEFAULT_SIZE` (`210×84`), which for this codebase's cards is usually far too small,
-so the result overlaps. Never call `autoLayout` with a `sizes` map that predates the
-nodes being mounted — go through `measureThenLayout` (see [canvas.md](canvas.md)).
+`autoLayout` reads `sizes` for every footprint. That map is each node's frozen `size`
+laid over the live DOM measurement (`effectiveSizes`), so a node the editor has already
+captured lays out correctly whether or not its card is currently mounted. A node
+*without* a captured size still falls back to `DEFAULT_SIZE` (`210×84`) — far too small
+for this codebase's cards, so the result overlaps. For anything that may include
+uncaptured nodes, still go through `measureThenLayout` (see [canvas.md](canvas.md)).
+
+### Layout is scoped to one level, and must be merged back
+
+`autoLayout`, `resolveOverlaps` and fit-to-view all run on the current detail level's
+subgraph (`atLevel`), never the whole document — arranging "the shape" must not shove
+the 27 detailed steps around. But they commit through `doc.replace`, which swaps the
+*entire* document, so the result is spliced back with `mergeNodes` / `mergeConnections`.
+
+> **Trap.** Committing the laid-out array directly deletes every node on the levels that
+> were not laid out. The array you hand `doc.replace` is the whole document, always.
 
 ### Waypoints must be cleared
 

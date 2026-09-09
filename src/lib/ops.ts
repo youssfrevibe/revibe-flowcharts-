@@ -47,8 +47,19 @@ export function applyOp(data: FlowData, op: Op): FlowData {
       };
     }
     case "node.delete": {
+      // Cascades three ways: the node, its connections, and any reference to it from a
+      // parent's `children`. A dangling child id would leave a level-1 step claiming to
+      // collapse a step that no longer exists, so the two levels would disagree about
+      // how many steps the process has. Only parents that actually referenced it are
+      // reallocated, so this stays cheap on large documents.
       return {
-        nodes: data.nodes.filter((n) => n.id !== op.id),
+        nodes: data.nodes
+          .filter((n) => n.id !== op.id)
+          .map((n) =>
+            n.children?.includes(op.id)
+              ? { ...n, children: n.children.filter((c) => c !== op.id) }
+              : n
+          ),
         connections: data.connections.filter((c) => c.from !== op.id && c.to !== op.id),
       };
     }

@@ -34,6 +34,22 @@ read-only. Treat every diagram as world-editable-by-link.
 One document is `FlowData = { nodes, connections }` (`lib/types.ts`). Flat arrays —
 no tree, no nesting. A connection references nodes by id. That is the whole model.
 
+**Detail levels are a filter over that one document, not three documents.** Every node
+and connection carries a `level` (1 "the shape", 2 "branches", 3 "every step", default
+3), and a node on levels 1–2 names the steps it collapses in `children`. `lib/levels.ts`
+holds the whole of it: `atLevel` returns the subgraph on screen, `populatedLevels` says
+which levels the file actually has, `mergeNodes` / `mergeConnections` splice a level's
+edits back into the whole.
+
+Keeping levels as a *field* is what leaves `applyOp` untouched — realtime convergence,
+undo and persistence all work on levels without knowing they exist. It also means a
+legacy document reads as level 3 and renders exactly as it always did.
+
+> **Trap.** Anything acting on "all nodes" — arrange, fix-overlaps, fit, select-all,
+> auto-connect, image export — must scope to the current level *and merge back*. Layout
+> commits through `doc.replace`, which swaps the entire document, so committing a single
+> level's laid-out array would delete every node on the other two.
+
 Every mutation is expressed as an **`Op`** and applied by the pure reducer
 `applyOp` in `lib/ops.ts`. Local edits and remote edits go through the same
 function, which is what makes two browsers converge. If you add a way to change the

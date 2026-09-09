@@ -6,6 +6,18 @@ export type TextSize = "sm" | "base" | "lg";
 export type NodeWidth = "compact" | "normal" | "wide" | "xwide";
 
 /**
+ * How much of the process a view shows. One document holds all three levels at once; a
+ * node or connection belongs to exactly one of them, and a node on levels 1-2 names the
+ * steps it collapses in `children`.
+ *   1 → "The shape"  — the handful of steps a new joiner needs on day one
+ *   2 → "Branches"   — every path that actually happens, and where each one ends
+ *   3 → "Every step" — every loop, retry and per-market exception
+ * Defaults to 3, so a document authored before levels existed reads as the fully
+ * detailed view it already was. See `lib/levels.ts`.
+ */
+export type DetailLevel = 1 | 2 | 3;
+
+/**
  * Who owns / performs the action at this step. Rendered as the card's border color so a
  * reader can scan the flow and see "who does what" at a glance.
  *   revibe  → Revibe team    (purple)
@@ -51,6 +63,12 @@ export interface FlowNode {
    * viewer with simpler cards measures smaller boxes and re-collides pathways the editor
    * had hand-cleared. Absent on legacy nodes until an editor session captures it. */
   size?: { w: number; h: number };
+  /** Which detail level shows this node. Defaults to 3 ("every step"). */
+  level?: DetailLevel;
+  /** The next-level-down node ids this one collapses into a single summary step. Only
+   * meaningful on levels 1 and 2. `node.delete` strips ids from here as it cascades, so
+   * this should not dangle — `childrenOf` still tolerates it if an older client wrote it. */
+  children?: string[];
   /** @deprecated Legacy single stage — migrated by normalize() into `internalStage` /
    * `externalStage`. Kept on the type so old JSON parses cleanly. */
   stage?: string;
@@ -78,6 +96,8 @@ export interface FlowConnection {
   to: string;
   label: string;
   type: ConnType;
+  /** Which detail level draws this connection. Defaults to 3, matching its endpoints. */
+  level?: DetailLevel;
   /** Optional explicit source/target ports; falls back to auto-routing when absent. */
   fromPort?: Port;
   toPort?: Port;
