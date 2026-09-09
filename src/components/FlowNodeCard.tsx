@@ -269,8 +269,14 @@ function FlowNodeCard({
 
   /* ------------------------------ DECISION: Refined Diamond ------------------------------ */
   if (shape === "decision") {
-    const w = isDetailed ? 250 : widthStyle.width ? (widthStyle.width as number) : 210;
-    const h = isDetailed ? 175 : Math.round(w * 0.72);
+    // This branch replaces wrapperProps.style wholesale, so the frozen size has to be
+    // applied to w/h here — setting it on the wrapper alone is silently discarded below.
+    // Without it the diamond resizes with density (250x175 detailed vs 210x151 standard)
+    // while routing still uses the stored box, and every pathway into a decision ends in
+    // mid-air. Measured, not guessed: this was six detached decisions on the demo chart.
+    const locked = lockSize && node.size ? node.size : null;
+    const w = locked ? locked.w : isDetailed ? 250 : widthStyle.width ? (widthStyle.width as number) : 210;
+    const h = locked ? locked.h : isDetailed ? 175 : Math.round(w * 0.72);
 
     return (
       <div {...wrapperProps} style={{ left: node.x, top: node.y, width: w, height: h }}>
