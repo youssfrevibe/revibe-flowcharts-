@@ -283,3 +283,31 @@ respected.
 > routed against cannot move. Anything that changes padding, border width or font size
 > under `[data-chrome="reader"]` would break that — verified by diffing all 109 boxes
 > and 123 routes across the mode switch.
+
+## Two rules the level model depends on
+
+**1. Anything acting on "all nodes" goes through `currentScope()`.** Levels share one
+world coordinate space — `applyLevelPlan` parks new tiers near the origin and auto-layout
+runs from there — so summary cards sit *underneath* the detailed map rather than beside
+it. An unscoped read therefore silently touches nodes that are not on screen.
+
+> **Trap.** The marquee was the one site that missed this, and it was invisible: the
+> inspector counts `view.nodes` so it said "5 selected", while `selRef` held eight ids and
+> `deleteSelection` reads `selRef`. Delete removed three summary cards the user was never
+> shown. Keyboard navigation (Tab / Home / End) and Find & Replace had milder versions —
+> panning to blank canvas, and rewriting text on levels nobody could review.
+
+**2. Every local producer that removes a node must strip it from `children`.** `applyOp`
+does this for `node.delete`, so a peer applying the broadcast op gets a clean document —
+but a local producer that only filters `nodes` does not, and `dataRef.current` is what
+`saveToCloud` persists. The deleter's dangling id is the one that survives.
+
+Use `stripChildRefs` when deleting and `remapChildren` when copying. Copy paths spread
+the source node, so duplicate, paste and alt-drag all cloned `children` verbatim and left
+two summary cards claiming the same steps; `parentOf` then resolved drill-up to whichever
+came first in array order.
+
+> **Trap.** Selection does not survive a level change — it is cleared, because ids from a
+> level you left would let Delete or an arrow key act on nodes you cannot see. Anything
+> that switches level *and* selects (drill-down) must select **after** the switch, or the
+> reset wipes it.

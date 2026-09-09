@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { Collaborator } from "@/lib/types";
+import { Collaborator, DetailLevel } from "@/lib/types";
+import { LEVEL_LABELS } from "@/lib/levels";
 import ThemeToggle from "./ThemeToggle";
 
 interface Props {
@@ -16,6 +17,14 @@ interface Props {
   viewMode: "standard" | "detailed";
   /** Editor chrome vs reader chrome — a different audience, not a denser card. */
   mode: "edit" | "view";
+  /** Detail level, and the levels this document actually has content for.
+   *
+   * Shown here and not only in the reader sidebar: authoring levels from the AI modal
+   * switches the editor to level 1, and with the control living solely in reader chrome
+   * an editor had no way back to their detailed map. */
+  level: DetailLevel;
+  availableLevels: DetailLevel[];
+  onLevel: (l: DetailLevel) => void;
   /** True when the diagram was opened through a view-only link, which pins `mode`. */
   modeLocked?: boolean;
   zoom: number;
@@ -315,6 +324,29 @@ export default function TopBar(p: Props) {
                 +{p.peers.length - 4}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Detail level. Only rendered once a document actually has more than one, so an
+            unlevelled diagram is not offered a control that does nothing. */}
+        {p.availableLevels.length > 1 && (
+          <div
+            className="flex items-center rounded-lg border p-0.5"
+            style={{ borderColor: "var(--ui-border-soft)", background: "var(--ui-input)" }}
+            title="Detail level"
+          >
+            {p.availableLevels.map((l) => (
+              <button
+                key={l}
+                type="button"
+                onClick={() => p.onLevel(l)}
+                className="ui-btn h-7 w-7 text-[11.5px] font-bold"
+                style={p.level === l ? { background: "var(--rv-purple)", color: "#fff" } : undefined}
+                title={LEVEL_LABELS[l].title}
+              >
+                {l}
+              </button>
+            ))}
           </div>
         )}
 

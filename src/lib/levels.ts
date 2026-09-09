@@ -157,3 +157,28 @@ export function tourOrder(data: FlowData): FlowNode[] {
   for (const n of data.nodes) walk(n.id);
   return order.map((id) => byId.get(id)!);
 }
+
+/** Rewrite a copied node's `children` through an id map, dropping anything not copied.
+ *
+ * Duplicate, paste and alt-drag all spread the source node, which carried `children`
+ * verbatim — leaving two summary cards claiming the *same* level-3 steps. `parentOf`
+ * then resolves drill-up to whichever appears first in array order, so the reader sees
+ * one set of steps collapsed under two different parents. A child that was not part of
+ * the copy is dropped rather than shared. */
+export function remapChildren(node: FlowNode, idMap: Map<string, string>): FlowNode {
+  if (!node.children?.length) return node;
+  const mapped = node.children.map((c) => idMap.get(c)).filter((c): c is string => Boolean(c));
+  return { ...node, children: mapped.length ? mapped : undefined };
+}
+
+/** Drop a deleted id from every other node's `children`.
+ *
+ * `applyOp`'s `node.delete` already does this, but local producers that filter nodes
+ * themselves must do it too — otherwise the deleting client keeps a dangling child id
+ * while every peer (which went through `applyOp`) does not, and the deleter's copy is
+ * the one that gets saved. */
+export function stripChildRefs(nodes: FlowNode[], removed: Set<string>): FlowNode[] {
+  return nodes.map((n) =>
+    n.children?.some((c) => removed.has(c)) ? { ...n, children: n.children.filter((c) => !removed.has(c)) } : n
+  );
+}

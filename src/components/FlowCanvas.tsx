@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import { useCanvasStore } from "@/lib/store";
 import { FlowNode, FlowConnection, FlowData, NodeType, ConnType, Op, Collaborator, Port, TextPosition, Pt, Actor, DetailLevel } from "@/lib/types";
-import { atLevel, populatedLevels, mergeNodes, mergeConnections, levelOf, tourOrder, DEFAULT_LEVEL } from "@/lib/levels";
+import { atLevel, populatedLevels, mergeNodes, mergeConnections, levelOf, tourOrder, remapChildren, stripChildRefs, DEFAULT_LEVEL } from "@/lib/levels";
 import {
   getDefaultData,
   getCachedData,
@@ -74,6 +74,15 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
    *  view-only link does, so every existing `readOnly` guard — `commit`, `setTransient`,
    *  undo/redo, nudge, reset, restore — covers it without being rewritten. */
   const readOnly = readOnlyProp || mode === "view";
+
+  // The diagram page reads `?view=1` in a post-mount effect (so its own first render
+  // matches the server's), which means `readOnlyProp` arrives as false and flips to true
+  // on the second render — after the `useState` above has already picked "edit". Without
+  // this sync a view-only link showed the *editor* chrome with its buttons merely
+  // disabled: no level rail, no detail panel, and connection ports still on the cards.
+  useEffect(() => {
+    if (readOnlyProp) setMode("view");
+  }, [readOnlyProp]);
   const [user, setUser] = useState<Collaborator | null>(null);
   const [askName, setAskName] = useState(false);
 
@@ -430,11 +439,14 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   }, [readOnly]);
 
   const commit = useCallback(
-    (producer: (d: FlowData) => FlowData, ops: Op[]) => {
+    (producer: (d: FlowData) => FlowData, ops: Op[], opts?: { silent?: boolean }) => {
       if (readOnly) return; // view-only: block all local mutations at the source
       const prev = dataRef.current;
       const next = producer(prev);
-      record(prev);
+      // `silent` skips the undo entry. Only geometry capture uses it: that is bookkeeping
+      // the user never asked for, and recording it means their first Ctrl+Z after opening
+      // a diagram undoes an invisible size write instead of the edit they just made.
+      if (!opts?.silent) record(prev);
       dataRef.current = next;
       setData(next);
       scheduleSave();
@@ -456,6 +468,14 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     setSelectedConn(id);
     if (id) select([]);
   }, [select]);
+
+  // A selection made at one level means nothing at another: the ids are no longer on
+  // screen, so Delete or an arrow key would silently act on nodes the user cannot see.
+  // Declared here because it needs `select` / `selectConn`, which are defined above.
+  useEffect(() => {
+    select([]);
+    selectConn(null);
+  }, [level, select, selectConn]);
 
   /* ------------------------- layout preferences ------------------------ */
   useEffect(() => {
@@ -655,7 +675,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       const byId = new Map(patched.map((n) => [n.id, n]));
       commit(
         (prev) => ({ ...prev, nodes: prev.nodes.map((n) => byId.get(n.id) ?? n) }),
-        patched.map((n) => ({ t: "node.upsert" as const, origin: uid, node: n }))
+        patched.map((n) => ({ t: "node.upsert" as const, origin: uid, node: n })),
+        { silent: true }
       );
     }, 1200);
     return () => clearTimeout(t);
@@ -900,7 +921,10 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         let connections = prev.connections;
         if (ids.length) {
           const set = new Set(ids);
-          nodes = nodes.filter((n) => !set.has(n.id));
+          // Cascade into `children` the same way applyOp does for `node.delete`. Without
+          // this the deleting client keeps a dangling child id while every peer drops it,
+          // and the deleter's copy is the one that gets saved.
+          nodes = stripChildRefs(nodes.filter((n) => !set.has(n.id)), set);
           connections = connections.filter((c) => !set.has(c.from) && !set.has(c.to));
           ids.forEach((id) => ops.push({ t: "node.delete", origin: uid, id }));
         }
@@ -926,7 +950,10 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         const nid = generateNodeId();
         idMap.set(n.id, nid);
         return { ...n, id: nid, x: n.x + 40, y: n.y + 40 };
-      });
+      })
+      // Second pass: `children` can only be remapped once every new id exists. Copying
+      // it verbatim would leave two summary cards claiming the same steps.
+      .map((n) => remapChildren(n, idMap));
       const set = new Set(ids);
       const newConns = dataRef.current.connections
         .filter((c) => set.has(c.from) && set.has(c.to))
@@ -959,7 +986,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       const nid = generateNodeId();
       idMap.set(n.id, nid);
       return { ...n, id: nid, x: n.x + 40, y: n.y + 40 };
-    });
+    }).map((n) => remapChildren(n, idMap));
     const newConns = cb.conns.map((c) => ({ ...c, id: newConnId(), from: idMap.get(c.from)!, to: idMap.get(c.to)! }));
     commit(
       (prev) => ({ nodes: [...prev.nodes, ...newNodes], connections: [...prev.connections, ...newConns] }),
@@ -1462,7 +1489,10 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       marqueeBoxRef.current = null;
       setMarquee(null);
       if (m && (m.w > 4 || m.h > 4)) {
-        const hits = dataRef.current.nodes
+        // Scoped to the level. Levels share one coordinate space, so an unscoped
+        // rubber-band silently grabs summary cards sitting under the detailed map —
+        // and the next Delete removes nodes the user was never shown.
+        const hits = currentScope().nodes
           .filter((n) => {
             const s = sizeOf(n.id, sizes);
             return n.x + s.w >= m.x && n.x <= m.x + m.w && n.y + s.h >= m.y && n.y <= m.y + m.h;
@@ -1752,7 +1782,9 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     // anywhere else Tab has to keep doing its job and walk the surrounding controls.
     if (k === "tab" && (t === cwRef.current || t === canvasRef.current || t === document.body)) {
       e.preventDefault();
-      const sorted = [...dataRef.current.nodes].sort((a, b) => a.y - b.y || a.x - b.x);
+      // Level-scoped: cycling into a node on a hidden level pans to blank canvas and
+      // leaves the selection ring nowhere on screen.
+      const sorted = [...currentScope().nodes].sort((a, b) => a.y - b.y || a.x - b.x);
       if (sorted.length === 0) return;
       const curId = selRef.current[0];
       const curIdx = curId ? sorted.findIndex((n) => n.id === curId) : -1;
@@ -1765,14 +1797,14 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     // Home: jump to first start node
     if (k === "home") {
       e.preventDefault();
-      const startNode = dataRef.current.nodes.find((n) => n.type === "start");
+      const startNode = currentScope().nodes.find((n) => n.type === "start");
       if (startNode) focusNode(startNode.id);
       return;
     }
     // End: jump to first terminal node
     if (k === "end") {
       e.preventDefault();
-      const endNode = dataRef.current.nodes.find((n) => n.type === "ok" || n.type === "fail");
+      const endNode = currentScope().nodes.find((n) => n.type === "ok" || n.type === "fail");
       if (endNode) focusNode(endNode.id);
       return;
     }
@@ -1905,7 +1937,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
           const nid = generateNodeId();
           idMap.set(n.id, nid);
           return { ...n, id: nid };
-        });
+        }).map((n) => remapChildren(n, idMap));
         const inSel = new Set(ids);
         const copiedConns = start.connections
           .filter((c) => inSel.has(c.from) && inSel.has(c.to))
@@ -2484,11 +2516,16 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
               to: sorted[i + 1].id,
               label: src.type === "decision" ? "Yes" : "",
               type: src.type === "decision" ? "cyes" : "",
+              // Inherit the level of the step it leaves, so a levelled import does not
+              // synthesise level-3 connections between level-1 nodes.
+              level: levelOf(src),
             }));
           }
           snapshotNow("Before file import");
           commit(() => ({ nodes, connections }), [{ t: "doc.replace", origin: uid, nodes, connections }]);
-          void measureThenLayout(nodes.map((n) => n.id));
+          // Scoped for the same reason as the AI edit path: ids on unmounted levels are
+          // never measured, so an unscoped call burns the full 4s ceiling.
+          void measureThenLayout(atLevel({ nodes, connections }, levelRef.current).nodes.map((n) => n.id));
         } else {
           alert("Invalid flowchart JSON format.");
         }
@@ -2564,13 +2601,21 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const applyAIEditPlan = useCallback(
     (operations: AIEditOp[], summary: string) => {
       snapshotNow(summary ? `Before AI edit: ${summary.slice(0, 60)}` : "Before AI edit");
-      const { data: next, ops, title: newTitle, counts } = applyAIEdits(dataRef.current, operations, uid);
+      const { data: next, ops, title: newTitle, counts } = applyAIEdits(
+        dataRef.current,
+        operations,
+        uid,
+        levelRef.current
+      );
 
       commit(() => next, ops);
       if (newTitle && newTitle !== projectTitle) handleSaveTitle(newTitle);
 
       if (counts.added || counts.deleted) {
-        void measureThenLayout(next.nodes.map((n) => n.id));
+        // Only the current level's ids: measureThenLayout blocks until every id it was
+        // given has been measured, and cards on other levels are not mounted — so passing
+        // the whole document stalls for the full 4s ceiling and then lays out the wrong level.
+        void measureThenLayout(atLevel(next, levelRef.current).nodes.map((n) => n.id));
       }
 
       return describeCounts(counts);
@@ -2657,6 +2702,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     cardFns.current.setEditNode(n);
   }, []);
   const cardDelete = useCallback((id: string) => {
+    if (cardFns.current.readOnly) return;
     cardFns.current.select([id]);
     cardFns.current.deleteSelection();
   }, []);
@@ -2740,6 +2786,9 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         mode={mode}
         modeLocked={readOnlyProp}
         onMode={setMode}
+        level={level}
+        availableLevels={availableLevels}
+        onLevel={setLevel}
         onZoomIn={() => {
           const r = cwRef.current!.getBoundingClientRect();
           zoomAt(1.2, r.width / 2, r.height / 2);
@@ -2905,8 +2954,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
                     onContextMenu={cardContextMenu}
                     onPortMouseDown={cardPortDown}
                     onQuickAdd={readOnly ? undefined : cardQuickAdd}
-                    onUpdate={cardUpdate}
-                    onDelete={cardDelete}
+                    onUpdate={readOnly ? undefined : cardUpdate}
+                    onDelete={readOnly ? undefined : cardDelete}
                   />
                 ))}
               </div>
@@ -3002,8 +3051,12 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
                   // landing on that child, which is the whole point of `children`.
                   const target = (levelOf(child) as DetailLevel) ?? DEFAULT_LEVEL;
                   setLevel(target);
-                  select([child.id]);
-                  setTimeout(() => focusNode(child.id), 60);
+                  // Selected *after* the switch, not with it: changing level clears the
+                  // selection, so selecting first would simply be wiped.
+                  setTimeout(() => {
+                    select([child.id]);
+                    focusNode(child.id);
+                  }, 60);
                 }}
               />
             )
@@ -3058,6 +3111,9 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       {showHandover && (
         <ProcessHandoverForm
           onImportProcess={(newNodes, newConnections) => {
+            // Every other whole-document swap snapshots first; this one replaces all
+            // three levels and had only the in-memory undo stack behind it.
+            snapshotNow("Before process handover import");
             commit(() => ({ nodes: newNodes, connections: newConnections }), [
               { t: "doc.replace", origin: uid, nodes: newNodes, connections: newConnections },
             ]);
@@ -3146,7 +3202,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
 
       {showFind && (
         <FindReplaceBar
-          nodes={data.nodes}
+          nodes={view.nodes}
           mode={showFind}
           onClose={() => setShowFind(null)}
           onFocusNode={focusNode}

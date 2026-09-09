@@ -11,9 +11,10 @@
  */
 
 import { generateNodeId } from "./diagram-store";
+import { DEFAULT_LEVEL, stripChildRefs } from "./levels";
 import { connId, newConnId } from "./ops";
 import { AIEditOp } from "./ai-schema";
-import { FlowConnection, FlowData, FlowNode, Op } from "./types";
+import { FlowConnection, FlowData, FlowNode, Op, DetailLevel } from "./types";
 
 export interface AIEditResult {
   data: FlowData;
@@ -34,7 +35,17 @@ function fields<T>(op: object): Partial<T> {
   return rest as Partial<T>;
 }
 
-export function applyAIEdits(data: FlowData, operations: AIEditOp[], uid: string): AIEditResult {
+/**
+ * @param level The detail level the caller is looking at. Everything the plan creates is
+ * stamped with it — the edit schema has no `level` field, so without this a node added
+ * while viewing "the shape" would default to level 3 and vanish the moment it was made.
+ */
+export function applyAIEdits(
+  data: FlowData,
+  operations: AIEditOp[],
+  uid: string,
+  level: DetailLevel = DEFAULT_LEVEL
+): AIEditResult {
   let nodes = [...data.nodes];
   let connections = [...data.connections];
   const ops: Op[] = [];
@@ -63,6 +74,7 @@ export function applyAIEdits(data: FlowData, operations: AIEditOp[], uid: string
           detail: patch.detail ?? "",
           x: 240 + (placed % 5) * 320,
           y: maxY + 220 + Math.floor(placed / 5) * 200,
+          level,
         };
         placed++;
         nodes.push(node);
@@ -86,7 +98,11 @@ export function applyAIEdits(data: FlowData, operations: AIEditOp[], uid: string
       case "deleteNode": {
         const id = resolve(op.id);
         if (!nodes.some((n) => n.id === id)) break;
-        nodes = nodes.filter((n) => n.id !== id);
+        // Cascade into `children` exactly as applyOp does. The broadcast op below is
+        // `node.delete`, which strips the reference on every peer — if the local reducer
+        // skips it, the editor keeps a dangling child id, and the editor's copy is what
+        // gets persisted.
+        nodes = stripChildRefs(nodes.filter((n) => n.id !== id), new Set([id]));
         connections = connections.filter((c) => c.from !== id && c.to !== id);
         ops.push({ t: "node.delete", origin: uid, id });
         counts.deleted++;
@@ -107,6 +123,7 @@ export function applyAIEdits(data: FlowData, operations: AIEditOp[], uid: string
           to,
           label: patch.label ?? "",
           type: patch.type ?? "",
+          level,
         };
         connections.push(conn);
         ops.push({ t: "conn.upsert", origin: uid, conn });
