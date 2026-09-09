@@ -12,6 +12,49 @@
 }
 
 /* ------------------------------------------------------------------ *
+ * Revibe brand remap of Tailwind's accent scales.
+ *
+ * `sky` and `indigo` were this app's accent throughout — 68 utility classes
+ * across 16 files covering buttons, links, focus rings, selection and the hero
+ * gradients. Rewriting every call site would be 68 chances to miss one and to
+ * drift again later, so the two scales are remapped onto the brand instead:
+ * sky -> Revibe purple, indigo -> Revibe pink. Every `bg-sky-600` and every
+ * `from-sky-600 to-indigo-600` becomes brand-correct in one place, including
+ * ones written after this.
+ *
+ * Hard-coded hex accents are NOT covered and must be fixed at the source — the
+ * pathway stroke colours in Connections.tsx were the only ones.
+ * ------------------------------------------------------------------ */
+@theme {
+  /* Revibe purple — anchored on #7c3aed at 600. */
+  --color-sky-50: #f5f3ff;
+  --color-sky-100: #ede9fe;
+  --color-sky-200: #ddd6fe;
+  --color-sky-300: #c4b5fd;
+  --color-sky-400: #a78bfa;
+  --color-sky-500: #8b5cf6;
+  --color-sky-600: #7c3aed;
+  --color-sky-700: #6d28d9;
+  --color-sky-800: #5b21b6;
+  --color-sky-900: #4c1d95;
+  --color-sky-950: #2e1065;
+
+  /* Revibe pink — anchored on #ff2e63 at 500 and #e01e4f at 600, so the
+     gradients that pair indigo with sky land on the brand's two colours. */
+  --color-indigo-50: #fff1f4;
+  --color-indigo-100: #ffe5ee;
+  --color-indigo-200: #fecdd8;
+  --color-indigo-300: #fda4b8;
+  --color-indigo-400: #ff6b8f;
+  --color-indigo-500: #ff2e63;
+  --color-indigo-600: #e01e4f;
+  --color-indigo-700: #be123c;
+  --color-indigo-800: #9f1239;
+  --color-indigo-900: #881337;
+  --color-indigo-950: #4c0519;
+}
+
+/* ------------------------------------------------------------------ *
  * Editor Surface & Elevation Tokens (Tactile, Bespoke Design System)
  * ------------------------------------------------------------------ */
 /* Revibe brand palette (revibe.me). Fixed values — these are the brand, so they do not
@@ -64,12 +107,12 @@
   --ui-hover: rgba(15, 23, 42, 0.05);
   --ui-active: rgba(15, 23, 42, 0.10);
   --ui-input: #f1f5f9;
-  --ui-accent: #0284c7;
-  --ui-accent-hover: #0369a1;
-  --ui-accent-soft: rgba(2, 132, 199, 0.12);
+  --ui-accent: #7c3aed;
+  --ui-accent-hover: #6d28d9;
+  --ui-accent-soft: rgba(124, 58, 237, 0.12);
   --ui-accent-text: #ffffff;
-  --ui-selection: #0284c7;
-  --ui-selection-glow: rgba(2, 132, 199, 0.25);
+  --ui-selection: #7c3aed;
+  --ui-selection-glow: rgba(124, 58, 237, 0.25);
   --ui-danger: #dc2626;
   --ui-danger-soft: rgba(220, 38, 38, 0.12);
   --ui-success: #059669;
@@ -95,12 +138,14 @@
   --ui-hover: rgba(255, 255, 255, 0.07);
   --ui-active: rgba(255, 255, 255, 0.12);
   --ui-input: #1b1d20;
-  --ui-accent: #38bdf8;
-  --ui-accent-hover: #7dd3fc;
-  --ui-accent-soft: rgba(56, 189, 248, 0.16);
-  --ui-accent-text: #082f49;
-  --ui-selection: #38bdf8;
-  --ui-selection-glow: rgba(56, 189, 248, 0.30);
+  /* Lighter on near-black: #7c3aed on #0c0d0e fails contrast for text and reads muddy
+     for a selection ring, so dark mode steps up the scale rather than changing hue. */
+  --ui-accent: #a78bfa;
+  --ui-accent-hover: #c4b5fd;
+  --ui-accent-soft: rgba(167, 139, 250, 0.16);
+  --ui-accent-text: #2e1065;
+  --ui-selection: #a78bfa;
+  --ui-selection-glow: rgba(167, 139, 250, 0.30);
   --ui-danger: #f87171;
   --ui-danger-soft: rgba(248, 113, 113, 0.16);
   --ui-success: #34d399;

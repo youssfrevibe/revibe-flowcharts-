@@ -116,3 +116,44 @@ export function mergeConnections(all: FlowConnection[], updated: FlowConnection[
 export function connectionsAtLevel(data: FlowData, level: DetailLevel): FlowConnection[] {
   return data.connections.filter((c) => levelOf(c) === level);
 }
+
+/** A deterministic walk of one level, for the guided tour.
+ *
+ * Starts at the entry points — an explicit `start` node if the level has one, otherwise
+ * every node nothing points at — then follows outgoing connections depth-first in stored
+ * order, so two readers are walked through the process identically.
+ *
+ * Anything unreachable is appended rather than dropped. An orphaned step is exactly the
+ * kind of thing a reader should be shown; hiding it would make the tour quietly lie about
+ * how many steps the process has. Cycles terminate on the visited set. */
+export function tourOrder(data: FlowData): FlowNode[] {
+  const byId = new Map(data.nodes.map((n) => [n.id, n]));
+  const outgoing = new Map<string, string[]>();
+  for (const c of data.connections) {
+    if (!outgoing.has(c.from)) outgoing.set(c.from, []);
+    outgoing.get(c.from)!.push(c.to);
+  }
+  const hasIncoming = new Set(data.connections.map((c) => c.to));
+  const starts = data.nodes.filter((n) => n.type === "start");
+  const entries = starts.length ? starts : data.nodes.filter((n) => !hasIncoming.has(n.id));
+
+  const order: string[] = [];
+  const seen = new Set<string>();
+  const stack: string[] = [];
+  const walk = (root: string) => {
+    stack.length = 0;
+    stack.push(root);
+    while (stack.length) {
+      const id = stack.pop()!;
+      if (seen.has(id) || !byId.has(id)) continue;
+      seen.add(id);
+      order.push(id);
+      const next = outgoing.get(id) ?? [];
+      // Reversed because the stack pops last-in first: this preserves stored order.
+      for (let i = next.length - 1; i >= 0; i--) stack.push(next[i]);
+    }
+  };
+  for (const e of entries) walk(e.id);
+  for (const n of data.nodes) walk(n.id);
+  return order.map((id) => byId.get(id)!);
+}

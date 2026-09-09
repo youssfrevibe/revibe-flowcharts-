@@ -26,6 +26,8 @@ interface Props {
   title: string;
   subtitle: string;
   onSelectNode: (id: string) => void;
+  tourActive: boolean;
+  onStartTour: () => void;
 }
 
 export default function LevelSidebar({
@@ -37,6 +39,8 @@ export default function LevelSidebar({
   title,
   subtitle,
   onSelectNode,
+  tourActive,
+  onStartTour,
 }: Props) {
   const counts = useMemo(() => levelCounts(data), [data]);
 
@@ -67,6 +71,16 @@ export default function LevelSidebar({
             {subtitle}
           </p>
         )}
+        {/* The way in for someone who has never seen this process. Sits above the zoom
+            levels because "show me" beats "choose a detail level" for a first-time reader. */}
+        <button
+          onClick={onStartTour}
+          disabled={tourActive || !onStartTour}
+          className="mt-3 w-full rounded-xl px-3 py-2 text-[12.5px] font-semibold text-white transition-opacity disabled:opacity-40"
+          style={{ background: "var(--rv-gradient)" }}
+        >
+          ▶ Walk the journey
+        </button>
       </div>
 
       <div className="px-4 pt-5">

@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import { useCanvasStore } from "@/lib/store";
 import { FlowNode, FlowConnection, FlowData, NodeType, ConnType, Op, Collaborator, Port, TextPosition, Pt, Actor, DetailLevel } from "@/lib/types";
-import { atLevel, populatedLevels, mergeNodes, mergeConnections, levelOf, DEFAULT_LEVEL } from "@/lib/levels";
+import { atLevel, populatedLevels, mergeNodes, mergeConnections, levelOf, tourOrder, DEFAULT_LEVEL } from "@/lib/levels";
 import {
   getDefaultData,
   getCachedData,
@@ -28,6 +28,7 @@ import Toolbar from "./Toolbar";
 import LayersPanel from "./LayersPanel";
 import LevelSidebar from "./LevelSidebar";
 import NodeDetailPanel from "./NodeDetailPanel";
+import GuidedTour from "./GuidedTour";
 import InspectorPanel, { AlignKind } from "./InspectorPanel";
 import ContextMenu, { ContextMenuItem } from "./ContextMenu";
 import Connections, { WaypointDragStart, SegmentDragStart, EndpointDragStart } from "./Connections";
@@ -2572,6 +2573,24 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     };
   }, [detailNode, view]);
 
+  // Guided tour. Reader-only, and deliberately thin: it drives the ordinary selection, so
+  // the panel that opens, the pathways that stay lit and the pan that happens are exactly
+  // the ones a click produces. One behaviour to keep correct instead of two.
+  const [tourIndex, setTourIndex] = useState<number | null>(null);
+  const tourSteps = useMemo(() => tourOrder(view), [view]);
+  useEffect(() => {
+    if (tourIndex === null) return;
+    const step = tourSteps[tourIndex];
+    if (!step) return;
+    select([step.id]);
+    focusNode(step.id);
+  }, [tourIndex, tourSteps, select, focusNode]);
+  // Leaving reader mode ends the tour: the editor chrome has no bar to drive it from, and
+  // a tour running invisibly would keep stealing selection.
+  useEffect(() => {
+    if (mode !== "view" && tourIndex !== null) setTourIndex(null);
+  }, [mode, tourIndex]);
+
   return (
     <div className="flex flex-col h-screen overflow-hidden" style={{ background: "var(--ui-canvas)" }}>
       <TopBar
@@ -2638,6 +2657,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
               onLevel={setLevel}
               title={projectTitle}
               subtitle={projectSubtitle}
+              tourActive={tourIndex !== null}
+              onStartTour={() => setTourIndex(tourSteps.length ? 0 : null)}
               onSelectNode={(id) => {
                 select([id]);
                 focusNode(id);
@@ -2719,6 +2740,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
               <Connections
                 nodes={view.nodes}
                 routes={routes}
+                emphasisNodeId={mode === "view" ? (detailNode?.id ?? null) : null}
                 sizes={sizes}
                 selectedId={selectedConn}
                 onSelect={selectConn}
@@ -2770,6 +2792,15 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
               </div>
             )}
           </div>
+
+          {mode === "view" && tourIndex !== null && (
+            <GuidedTour
+              steps={tourSteps}
+              index={tourIndex}
+              onIndex={setTourIndex}
+              onExit={() => setTourIndex(null)}
+            />
+          )}
 
           {loaded && (
             <Minimap

@@ -21,6 +21,10 @@ interface Props {
   routes: RoutedEdge[];
   sizes: Map<string, Size>;
   selectedId: string | null;
+  /** When set, pathways that do not touch this node fade back, so a reader can see at a
+   *  glance where flow arrives from and departs to. Null keeps every pathway at full
+   *  strength — an editor needs the whole graph at once. */
+  emphasisNodeId?: string | null;
   onSelect: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, id: string) => void;
   onEditLabel: (id: string) => void;
@@ -72,6 +76,7 @@ export default function Connections({
   routes,
   sizes,
   selectedId,
+  emphasisNodeId = null,
   onSelect,
   onContextMenu,
   onEditLabel,
@@ -151,6 +156,7 @@ export default function Connections({
           r={r}
           selected={selectedId === r.id}
           hovered={hoverId === r.id}
+          dimmed={Boolean(emphasisNodeId) && r.conn.from !== emphasisNodeId && r.conn.to !== emphasisNodeId}
           onSelect={onSelect}
           onContextMenu={onContextMenu}
           onEditLabel={onEditLabel}
@@ -258,6 +264,7 @@ const Edge = memo(function Edge({
   r,
   selected,
   hovered,
+  dimmed,
   onSelect,
   onContextMenu,
   onEditLabel,
@@ -266,6 +273,8 @@ const Edge = memo(function Edge({
   r: RoutedEdge;
   selected: boolean;
   hovered: boolean;
+  /** Faded because the reader is focused on a different step. */
+  dimmed: boolean;
   onSelect: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, id: string) => void;
   onEditLabel: (id: string) => void;
@@ -277,7 +286,10 @@ const Edge = memo(function Edge({
   const active = selected || hovered;
 
   return (
-    <g>
+    // Emphasis is opacity-only on purpose. Changing stroke width or geometry here would
+    // make pathways appear to shift when a reader clicks a step, and this diagram's whole
+    // promise is that the lines stay exactly where they were put.
+    <g opacity={dimmed ? 0.1 : 1} style={{ transition: "opacity 140ms ease" }}>
       {/* Subtle selection / hover glow layer */}
       {active && (
         <path
@@ -307,7 +319,7 @@ const Edge = memo(function Edge({
         className={`fill-none transition-[stroke-width,stroke] duration-100 ${
           selected || hovered ? "" : STROKE[c.type]
         }`}
-        stroke={selected ? "#38bdf8" : hovered ? "#7dd3fc" : undefined}
+        stroke={selected ? "#8b5cf6" : hovered ? "#a78bfa" : undefined}
         strokeWidth={selected ? (isBold ? 4 : 2.75) : isBold ? 3.25 : hovered ? 2.5 : 1.75}
         strokeLinejoin="round"
         strokeLinecap="round"

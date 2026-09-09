@@ -171,3 +171,28 @@ collaborator's edits too. Known and accepted.
 (renders `RoutedEdge[]`; hit areas are transparent `stroke-width:20` paths),
 `InspectorPanel`, `Toolbar`, `TopBar`, `LayersPanel`, `Minimap`, `CommandPalette`,
 `FindReplaceBar`, `DiagramStats`, `VersionHistory`, `EditModal`, `ContextMenu`.
+
+## Pathway emphasis and the guided tour
+
+Selecting a step in reader mode fades every pathway that does not touch it
+(`emphasisNodeId` on `Connections`, `dimmed` on each `Edge`). The reader gets
+"where does flow arrive from, where does it go" without tracing lines by eye.
+
+> **Why opacity only.** It would be easy to thicken the surviving pathways or nudge
+> them clear. Both make the lines appear to *move* when a reader clicks a step, and
+> the whole promise of this diagram is that they do not. Emphasis never touches
+> geometry — verified by diffing every route `d` before and after selection.
+
+The guided tour (`GuidedTour`) walks that same selection. It draws nothing on the
+canvas of its own: it sets the index, and the existing select + `focusNode` produce
+the panel, the emphasis and the pan. One behaviour to keep correct instead of two.
+
+`tourOrder` in `lib/levels.ts` builds the walk — entry points first (an explicit
+`start` node, else anything with no incoming edge), then depth-first in stored
+connection order so two readers are walked through identically. Unreachable steps
+are appended rather than dropped; an orphan is something a reader should see, and
+hiding it would make the step count lie.
+
+> **Trap.** The tour only runs in reader mode, and leaving that mode ends it. A tour
+> running under the editor chrome has no bar to drive it and would keep stealing the
+> selection out from under whoever is editing.

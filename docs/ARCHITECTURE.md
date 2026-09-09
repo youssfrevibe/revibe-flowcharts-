@@ -126,3 +126,10 @@ column and fall back.
 - Geometry helpers stay pure and React-free so the canvas and the exporter share one
   implementation. They used to differ, and what you saw was not what you exported.
 - Comments explain *why*. The codebase is consistent about this; match it.
+- **Brand colour comes from a scale remap, not from call sites.** Tailwind's `sky`
+  and `indigo` scales are redefined in `globals.css` as Revibe purple and Revibe
+  pink, so the ~68 existing `sky-*` utilities and every `from-sky-600 to-indigo-600`
+  gradient are brand-correct in one place. Write `sky`/`indigo` and you get the brand;
+  do **not** "fix" them to `violet`/`rose` at the call site. Hard-coded hex accents
+  bypass this entirely — that is why the pathway strokes in `Connections.tsx` had to be
+  changed by hand, and why new code should reach for a token, not a literal.
