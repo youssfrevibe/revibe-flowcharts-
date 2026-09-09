@@ -62,6 +62,14 @@ interface FlowCanvasProps {
   readOnly?: boolean;
 }
 
+/** The floor for the opening frame.
+ *
+ * Derived, not guessed: a card title is 13.5px, and text below roughly 11px stops being
+ * comfortably readable, so the title clears that bar at 13.5 * z >= 11 -> z >= 0.81.
+ * Measured on the 109-node return-claims map, fit-to-view chose 0.05, which renders a
+ * card at 12x8px and its title at 0.7px. */
+const READABLE_ZOOM = 0.82;
+
 const GRID = 16;
 const snapVal = (v: number, on: boolean) => (on ? Math.round(v / GRID) * GRID : Math.round(v));
 
@@ -231,7 +239,12 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   zoomOnScrollRef.current = zoomOnScroll;
   // Only persist once the stored preference has been read, so the initial `false` defaults
   // don't overwrite it before the effect below has had a chance to run.
-  const panelsLoaded = useRef(false);
+  // State, not a ref, on purpose. As a ref it flipped true inside the load effect, so the
+  // persist effect below ran in the SAME commit and snapshotted the pre-update values —
+  // writing `left:false` over the first-visit default. React then re-invokes effects in
+  // development, the second pass read that back, and the default silently lost. As state
+  // it cannot settle until the render after the loaded values are applied.
+  const [panelsLoaded, setPanelsLoaded] = useState(false);
 
   useEffect(() => {
     try {
@@ -241,23 +254,35 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         setShowLeft(Boolean(p.left));
         setShowRight(Boolean(p.right));
         setZoomOnScroll(Boolean(p.zoomOnScroll));
+      } else {
+        // No stored preference means this is someone's first visit. Opening with both
+        // rails collapsed gives them a wall of unlabelled boxes and no structure to read
+        // it by; the left rail is the only thing on screen that says what is in here.
+        setShowLeft(true);
+        // Persisted here rather than left to the effect below, which would otherwise
+        // snapshot `left:false` before this state update lands. React re-invokes effects
+        // in development, and the second pass would read that back and quietly undo the
+        // default — the first visit would look exactly like a returning one.
+        try {
+          localStorage.setItem("flow_panels", JSON.stringify({ left: true, right: false, zoomOnScroll: false }));
+        } catch {}
       }
     } catch {}
-    panelsLoaded.current = true;
+    setPanelsLoaded(true);
   }, []);
 
   // Persisting in an effect rather than inside the state updater: updaters must be pure.
   // Writing storage from one meant two toggles in the same batch each read the value the
   // other hadn't written yet, and the second one's preference was lost.
   useEffect(() => {
-    if (!panelsLoaded.current) return;
+    if (!panelsLoaded) return;
     try {
       localStorage.setItem(
         "flow_panels",
         JSON.stringify({ left: showLeft, right: showRight, zoomOnScroll })
       );
     } catch {}
-  }, [showLeft, showRight, zoomOnScroll]);
+  }, [panelsLoaded, showLeft, showRight, zoomOnScroll]);
 
   const togglePanel = useCallback((side: "left" | "right") => {
     if (side === "left") setShowLeft((v) => !v);
@@ -331,6 +356,9 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const lastMoveBcast = useRef(0);
   const nudgeTs = useRef(0);
   const fitRef = useRef<() => void>(() => {});
+  /** The opening frame, held in a ref so the cloud-load effect can call it without
+   *  re-subscribing every time the framing callback is rebuilt. */
+  const frameRef = useRef<() => void>(() => {});
 
   const [projectTitle, setProjectTitle] = useState(title);
   const [projectSubtitle, setProjectSubtitle] = useState(subtitle);
@@ -531,7 +559,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       setLoaded(true);
       setDocSettled(true);
       // Fit after node sizes have been measured (rAF + short delay covers the measurement pass).
-      setTimeout(() => fitRef.current(), 180);
+      setTimeout(() => frameRef.current(), 180);
     })();
     return () => {
       cancelled = true;
@@ -771,6 +799,49 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   );
   const fitView = useCallback(() => computeFit(), [computeFit]);
   fitRef.current = fitView;
+
+  /**
+   * The opening frame — what a reader sees the instant a diagram loads.
+   *
+   * Fit-to-view is the wrong goal for a large process map. Fitting 109 steps spread over
+   * tens of thousands of pixels into a laptop window produced 12x8px cards and 0.8px
+   * text, with the first step of the process off screen: technically the whole diagram,
+   * legibly none of it. Measured on the return-claims document before this existed.
+   *
+   * So on open, fit only when the result would actually be readable. Otherwise hold a
+   * readable zoom and anchor on where the process *starts*, which is the one place a
+   * first-time reader needs to begin. The overview is still one keystroke away —
+   * explicit Fit keeps doing true fit, because asking for the whole shape is a
+   * deliberate act and then the smudge is the answer you wanted.
+   */
+  const frameForReading = useCallback(() => {
+    const scope = currentScope();
+    const b = computeBounds(scope.nodes, sizes);
+    if (!b || !cwRef.current) return;
+    const r = cwRef.current.getBoundingClientRect();
+    const pad = 90;
+    const fitZoom = Math.min((r.width - pad * 2) / b.w, (r.height - pad * 2) / b.h, 1.6);
+    if (fitZoom >= READABLE_ZOOM) {
+      computeFit();
+      return;
+    }
+    // Anchor on the start of the process; fall back to the first step of the walk, then
+    // to whatever exists, so a map with no explicit start still opens somewhere sensible.
+    const anchor = scope.nodes.find((n) => n.type === "start") ?? tourOrder(scope)[0] ?? scope.nodes[0];
+    if (!anchor) {
+      computeFit();
+      return;
+    }
+    const s = sizeOf(anchor.id, sizes);
+    commitView({
+      pan: {
+        x: r.width / 2 - (anchor.x + s.w / 2) * READABLE_ZOOM,
+        y: r.height / 2 - (anchor.y + s.h / 2) * READABLE_ZOOM,
+      },
+      zoom: READABLE_ZOOM,
+    });
+  }, [sizes, commitView, computeFit, currentScope]);
+  frameRef.current = frameForReading;
 
   const zoomAt = useCallback(
     (factor: number, cx: number, cy: number) => {

@@ -311,3 +311,27 @@ came first in array order.
 > level you left would let Delete or an arrow key act on nodes you cannot see. Anything
 > that switches level *and* selects (drill-down) must select **after** the switch, or the
 > reset wipes it.
+
+## The opening frame
+
+A diagram does not open on fit-to-view. `frameForReading` fits **only when the result
+would be readable**; otherwise it holds `READABLE_ZOOM` and centres on the start of the
+process. Explicit Fit (Shift+1, the toolbar button) still does true fit.
+
+`READABLE_ZOOM` is derived, not taste: a card title is 13.5px and text below roughly
+11px stops being comfortably readable, so `13.5 × z ≥ 11` gives `z ≥ 0.81`.
+
+> **Why.** Fit-to-view is the wrong goal for a large map. Measured on the 109-node
+> return-claims document, fit chose **0.05** — cards rendered **12×8px**, titles at
+> **0.7px**, and the first step of the process was off screen entirely. Technically the
+> whole diagram, legibly none of it. After: 82%, start card 151×73px, title 11.1px.
+
+Both rails also open on a **first** visit (no stored `flow_panels`), because the left
+rail is the only thing on screen that says what is in the diagram.
+
+> **Trap.** `panelsLoaded` is state, not a ref. As a ref it flipped inside the load
+> effect, so the persist effect ran in the same commit, snapshotted the pre-update
+> values and wrote `left:false` over the first-visit default — then React's development
+> double-invoke read that back and the default silently lost. Any "load prefs, then
+> persist them" pair has this shape; gate the writer on state so it cannot run before
+> the loaded values are applied.
