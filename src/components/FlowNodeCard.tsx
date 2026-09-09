@@ -1,7 +1,7 @@
 "use client";
 
 import { FlowNode, NodeType, Port } from "@/lib/types";
-import { getNodeStyle, getNodeFill, ACTOR_STYLES } from "@/lib/node-colors";
+import { getNodeStyle, ACTOR_STYLES } from "@/lib/node-colors";
 import React, { useRef, useCallback, useState, useEffect } from "react";
 
 export const TYPE_LABELS: Record<NodeType, string> = {
@@ -114,7 +114,7 @@ function FlowNodeCard({
   const isDetailed = viewMode === "detailed";
   const shape = SHAPE[node.type];
   const isNote = shape === "note";
-  const { className: colorCls, customStyle, fill } = getNodeStyle(node.color, node.type, isNote);
+  const { className: colorCls, customStyle, themeFill } = getNodeStyle(node.color, node.type, isNote);
 
   // Actor pill & left accent border
   const actorStyle = node.actor && !isNote ? ACTOR_STYLES[node.actor] : undefined;
@@ -127,12 +127,13 @@ function FlowNodeCard({
   const hasStageBlock = internalStage || externalStage || legacyStage;
   const stagesShared = internalStage && externalStage && internalStage === externalStage;
 
-  const renderStageLines = (isDarkNode: boolean) => {
+  // Cards follow the theme now, so the stage badges do too — there is no longer a
+  // "dark node" case to special-case against.
+  const renderStageLines = () => {
     if (!hasStageBlock) return null;
-    const badgeCls = isDarkNode
-      ? "bg-black/35 text-white/90 border-white/15"
-      : "bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700";
-    const labelCls = isDarkNode ? "text-white/60" : "text-zinc-500 dark:text-zinc-400";
+    const badgeCls =
+      "bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700";
+    const labelCls = "text-zinc-500 dark:text-zinc-400";
 
     if (stagesShared && internalStage) {
       return (
@@ -288,15 +289,18 @@ function FlowNodeCard({
         >
           <polygon
             points="50,2 97,35 50,68 3,35"
-            fill={fill}
-            stroke={actorStyle?.ring || "rgba(255,255,255,0.25)"}
+            fill={themeFill}
+            stroke={actorStyle?.ring || "var(--ui-border-strong)"}
             strokeWidth={actorStyle ? "2" : "1"}
             strokeLinejoin="round"
           />
         </svg>
 
         {/* Content Container positioned safely inside diamond boundaries */}
-        <div className={`absolute inset-0 flex flex-col justify-center px-[20%] py-3 text-white ${alignCls}`}>
+        <div
+          className={`absolute inset-0 flex flex-col justify-center px-[20%] py-3 text-zinc-900 dark:text-zinc-50 ${alignCls}`}
+          style={customStyle.color ? { color: customStyle.color } : undefined}
+        >
           {actorStyle && (
             <div
               className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[8.5px] font-bold uppercase tracking-wider mb-0.5 shadow-xs"
@@ -313,14 +317,14 @@ function FlowNodeCard({
             {node.sla && <span className="text-emerald-200 font-mono">· {node.sla}</span>}
           </div>
 
-          {hasStageBlock && <div className="mt-1">{renderStageLines(true)}</div>}
+          {hasStageBlock && <div className="mt-1">{renderStageLines()}</div>}
 
-          <div className={`${sizeCls.title} font-bold leading-tight text-white mt-1 text-balance`}>
+          <div className={`${sizeCls.title} font-bold leading-tight mt-1 text-balance`}>
             {node.label}
           </div>
 
           {node.detail && (
-            <div className={`${sizeCls.detail} leading-tight text-white/85 mt-1 line-clamp-2 text-balance`}>
+            <div className={`${sizeCls.detail} leading-tight opacity-80 mt-1 line-clamp-2 text-balance`}>
               {node.detail}
             </div>
           )}
@@ -363,7 +367,7 @@ function FlowNodeCard({
             {node.sla && <span className="text-[9px] font-mono opacity-90">SLA {node.sla}</span>}
           </div>
 
-          {hasStageBlock && <div className="mt-1">{renderStageLines(true)}</div>}
+          {hasStageBlock && <div className="mt-1">{renderStageLines()}</div>}
           <div className={`${sizeCls.title} font-bold leading-snug mt-1`}>{node.label}</div>
           {node.detail && (
             <div className={`${sizeCls.detail} leading-relaxed opacity-90 mt-0.5`}>{node.detail}</div>
@@ -492,7 +496,7 @@ function FlowNodeCard({
 
         {/* Stage Badges */}
         {hasStageBlock && (
-          <div className={`px-3.5 pt-2 ${isSub ? "mx-2" : ""}`}>{renderStageLines(true)}</div>
+          <div className={`px-3.5 pt-2 ${isSub ? "mx-2" : ""}`}>{renderStageLines()}</div>
         )}
 
         {/* Title */}

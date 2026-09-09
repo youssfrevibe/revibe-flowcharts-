@@ -196,3 +196,23 @@ hiding it would make the step count lie.
 > **Trap.** The tour only runs in reader mode, and leaving that mode ends it. A tour
 > running under the editor chrome has no bar to drive it and would keep stealing the
 > selection out from under whoever is editing.
+
+## Card and pathway colour
+
+Cards follow the theme: light surfaces in light mode, dark washes in dark mode. Both
+`DEFAULT_TYPE_STYLES` and the 14 `NODE_COLOR_PRESETS` used to be `bg-*-800/90` with
+white text in *both* themes, which is why a coloured card stayed a dark slab on a
+white page. Each keeps a tint so the type is still readable at a glance.
+
+> **Trap.** The decision shape is an SVG `<polygon fill="…">`, and an attribute cannot
+> carry a `dark:` variant. It reads `themeFill` from `getNodeStyle` — a CSS variable
+> (`--node-fill-*`, `--node-preset-*`) that globals.css redefines per theme. The hex
+> `fill` on the same return value is for the SVG **exporter**, which renders outside
+> the document on its own dark background and has no theme to read. Do not collapse
+> the two.
+
+Pathways are one colour for every branch type (`--flow-edge`). They were green for
+yes, red for no and amber for the third branch, which read as a status map — a red
+line looked like something was wrong rather than "this is the no path" — and
+duplicated what the branch label already says. Selection and hover are Revibe purple,
+now the only colour on the canvas that carries meaning.

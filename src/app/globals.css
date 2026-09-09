@@ -315,3 +315,86 @@ svg {
   }
 }
 
+
+/* ------------------------------------------------------------------ *
+ * Canvas surfaces — node fills and pathway colour.
+ *
+ * These are CSS variables rather than Tailwind classes because the decision
+ * diamond is an SVG <polygon fill="…">, which cannot take a `dark:` class. The
+ * hex equivalents still live in node-colors.ts for the SVG exporter, which
+ * renders outside the document and has no theme to read.
+ * ------------------------------------------------------------------ */
+:root {
+  --node-fill-start: #ecfdf5;
+  --node-fill-ok: #ecfdf5;
+  --node-fill-step: #ffffff;
+  --node-fill-decision: #f5f3ff;
+  --node-fill-sub: #fff1f4;
+  --node-fill-fail: #fef2f2;
+  --node-fill-note: #fffbeb;
+
+  /* One pathway colour for every branch type. Green/amber/red on the lines made
+     the canvas read as a status map, and duplicated what the branch labels
+     already say — so the colour carries no meaning and only has to be legible. */
+  --flow-edge: #526077;
+  --flow-label: #334155;
+}
+
+.dark {
+  --node-fill-start: #052e26;
+  --node-fill-ok: #052e26;
+  --node-fill-step: #18191c;
+  --node-fill-decision: #221046;
+  --node-fill-sub: #3b0a1c;
+  --node-fill-fail: #3a1013;
+  --node-fill-note: #2e2410;
+
+  --flow-edge: #9aa3b2;
+  --flow-label: #cbd5e1;
+}
+
+.flow-edge-stroke {
+  stroke: var(--flow-edge);
+}
+.flow-edge-fill {
+  fill: var(--flow-edge);
+}
+.flow-edge-text {
+  fill: var(--flow-label);
+}
+
+/* Preset node surfaces, per theme — read by the decision diamond's SVG fill.
+   Generated from NODE_COLOR_PRESETS; keep the two in step. */
+:root {
+  --node-preset-emerald: #ecfdf5;
+  --node-preset-teal: #f0fdfa;
+  --node-preset-cyan: #ecfeff;
+  --node-preset-blue: #eff6ff;
+  --node-preset-indigo: #f5f3ff;
+  --node-preset-violet: #f5f3ff;
+  --node-preset-purple: #faf5ff;
+  --node-preset-rose: #fff1f2;
+  --node-preset-amber: #fffbeb;
+  --node-preset-orange: #fff7ed;
+  --node-preset-red: #fef2f2;
+  --node-preset-slate: #f8fafc;
+  --node-preset-zinc: #fafafa;
+  --node-preset-dark: #f4f4f5;
+}
+
+.dark {
+  --node-preset-emerald: #052e26;
+  --node-preset-teal: #04312e;
+  --node-preset-cyan: #083344;
+  --node-preset-blue: #0c1e4a;
+  --node-preset-indigo: #231152;
+  --node-preset-violet: #2b1065;
+  --node-preset-purple: #3b0764;
+  --node-preset-rose: #4c0519;
+  --node-preset-amber: #3a2408;
+  --node-preset-orange: #411a05;
+  --node-preset-red: #3f0d0d;
+  --node-preset-slate: #131a26;
+  --node-preset-zinc: #1a1a1d;
+  --node-preset-dark: #111113;
+}

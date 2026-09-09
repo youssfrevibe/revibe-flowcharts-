@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Poppins, Inter, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { InlineScript } from "@/components/InlineScript";
 
 // Poppins — primary / brand & display font (matches Revibe).
 const poppins = Poppins({
@@ -44,7 +45,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${poppins.variable} ${inter.variable} ${geistMono.variable} h-full antialiased`}
     >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeInit }} />
+        <InlineScript html={themeInit} />
       </head>
       <body className="min-h-full flex flex-col font-sans" suppressHydrationWarning>
         {children}

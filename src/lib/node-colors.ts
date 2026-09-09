@@ -5,27 +5,40 @@ export interface ColorPreset {
   id: string;
   name: string;
   fill: string;
+  /** Surface for light mode; used to build --node-preset-<id>. */
+  fillLight?: string;
+  /** Surface for dark mode. */
+  fillDark?: string;
   border: string;
   bgClass: string;
   accent: string;
   isLight?: boolean;
 }
 
+/**
+ * Node accent presets. Light surface in light mode, dark wash in dark mode — the same
+ * shape the note presets already used. They were `bg-*-800/90 text-white` in both
+ * themes, which is why a coloured card stayed a dark slab on a white page.
+ *
+ * `fill` stays the saturated dark hex because the SVG exporter renders on a dark
+ * background outside the document; `fillLight`/`fillDark` feed the per-theme CSS
+ * variables that the decision diamond reads.
+ */
 export const NODE_COLOR_PRESETS: ColorPreset[] = [
-  { id: "emerald", name: "Emerald", fill: "#065f46", border: "#059669", bgClass: "bg-emerald-800/90 border-emerald-600/70 text-white", accent: "#34d399" },
-  { id: "teal", name: "Teal", fill: "#115e59", border: "#0d9488", bgClass: "bg-teal-800/90 border-teal-600/70 text-white", accent: "#2dd4bf" },
-  { id: "cyan", name: "Cyan", fill: "#155e75", border: "#0891b2", bgClass: "bg-cyan-800/90 border-cyan-600/70 text-white", accent: "#38bdf8" },
-  { id: "blue", name: "Blue", fill: "#1e40af", border: "#2563eb", bgClass: "bg-blue-800/90 border-blue-600/70 text-white", accent: "#60a5fa" },
-  { id: "indigo", name: "Indigo", fill: "#3730a3", border: "#4f46e5", bgClass: "bg-indigo-800/90 border-indigo-600/70 text-white", accent: "#818cf8" },
-  { id: "violet", name: "Violet", fill: "#5b21b6", border: "#7c3aed", bgClass: "bg-violet-800/90 border-violet-600/70 text-white", accent: "#a78bfa" },
-  { id: "purple", name: "Purple", fill: "#6b21a8", border: "#9333ea", bgClass: "bg-purple-800/90 border-purple-600/70 text-white", accent: "#c084fc" },
-  { id: "rose", name: "Rose", fill: "#9f1239", border: "#e11d48", bgClass: "bg-rose-800/90 border-rose-600/70 text-white", accent: "#fb7185" },
-  { id: "amber", name: "Amber", fill: "#92400e", border: "#d97706", bgClass: "bg-amber-800/90 border-amber-600/70 text-white", accent: "#fbbf24" },
-  { id: "orange", name: "Orange", fill: "#9a3412", border: "#ea580c", bgClass: "bg-orange-800/90 border-orange-600/70 text-white", accent: "#fb923c" },
-  { id: "red", name: "Red", fill: "#991b1b", border: "#dc2626", bgClass: "bg-red-800/90 border-red-600/70 text-white", accent: "#f87171" },
-  { id: "slate", name: "Slate", fill: "#1e293b", border: "#334155", bgClass: "bg-slate-800/90 border-slate-600/70 text-white", accent: "#94a3b8" },
-  { id: "zinc", name: "Zinc", fill: "#27272a", border: "#3f3f46", bgClass: "bg-zinc-800/90 border-zinc-600/70 text-white", accent: "#a1a1aa" },
-  { id: "dark", name: "Obsidian", fill: "#18181b", border: "#27272a", bgClass: "bg-zinc-900 border-zinc-700/80 text-white", accent: "#71717a" },
+  { id: "emerald", name: "Emerald", fill: "#065f46", fillLight: "#ecfdf5", fillDark: "#052e26", border: "#059669", bgClass: "bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200 dark:border-emerald-700/60 text-emerald-950 dark:text-emerald-100", accent: "#34d399" },
+  { id: "teal", name: "Teal", fill: "#115e59", fillLight: "#f0fdfa", fillDark: "#04312e", border: "#0d9488", bgClass: "bg-teal-50 dark:bg-teal-950/50 border-teal-200 dark:border-teal-700/60 text-teal-950 dark:text-teal-100", accent: "#2dd4bf" },
+  { id: "cyan", name: "Cyan", fill: "#155e75", fillLight: "#ecfeff", fillDark: "#083344", border: "#0891b2", bgClass: "bg-cyan-50 dark:bg-cyan-950/50 border-cyan-200 dark:border-cyan-700/60 text-cyan-950 dark:text-cyan-100", accent: "#38bdf8" },
+  { id: "blue", name: "Blue", fill: "#1e40af", fillLight: "#eff6ff", fillDark: "#0c1e4a", border: "#2563eb", bgClass: "bg-blue-50 dark:bg-blue-950/50 border-blue-200 dark:border-blue-700/60 text-blue-950 dark:text-blue-100", accent: "#60a5fa" },
+  { id: "indigo", name: "Indigo", fill: "#3730a3", fillLight: "#f5f3ff", fillDark: "#231152", border: "#4f46e5", bgClass: "bg-violet-50 dark:bg-violet-950/50 border-violet-200 dark:border-violet-700/60 text-violet-950 dark:text-violet-100", accent: "#818cf8" },
+  { id: "violet", name: "Violet", fill: "#5b21b6", fillLight: "#f5f3ff", fillDark: "#2b1065", border: "#7c3aed", bgClass: "bg-violet-50 dark:bg-violet-950/50 border-violet-200 dark:border-violet-700/60 text-violet-950 dark:text-violet-100", accent: "#a78bfa" },
+  { id: "purple", name: "Purple", fill: "#6b21a8", fillLight: "#faf5ff", fillDark: "#3b0764", border: "#9333ea", bgClass: "bg-purple-50 dark:bg-purple-950/50 border-purple-200 dark:border-purple-700/60 text-purple-950 dark:text-purple-100", accent: "#c084fc" },
+  { id: "rose", name: "Rose", fill: "#9f1239", fillLight: "#fff1f2", fillDark: "#4c0519", border: "#e11d48", bgClass: "bg-rose-50 dark:bg-rose-950/50 border-rose-200 dark:border-rose-700/60 text-rose-950 dark:text-rose-100", accent: "#fb7185" },
+  { id: "amber", name: "Amber", fill: "#92400e", fillLight: "#fffbeb", fillDark: "#3a2408", border: "#d97706", bgClass: "bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-700/60 text-amber-950 dark:text-amber-100", accent: "#fbbf24" },
+  { id: "orange", name: "Orange", fill: "#9a3412", fillLight: "#fff7ed", fillDark: "#411a05", border: "#ea580c", bgClass: "bg-orange-50 dark:bg-orange-950/50 border-orange-200 dark:border-orange-700/60 text-orange-950 dark:text-orange-100", accent: "#fb923c" },
+  { id: "red", name: "Red", fill: "#991b1b", fillLight: "#fef2f2", fillDark: "#3f0d0d", border: "#dc2626", bgClass: "bg-red-50 dark:bg-red-950/50 border-red-200 dark:border-red-700/60 text-red-950 dark:text-red-100", accent: "#f87171" },
+  { id: "slate", name: "Slate", fill: "#1e293b", fillLight: "#f8fafc", fillDark: "#131a26", border: "#334155", bgClass: "bg-slate-50 dark:bg-slate-950/50 border-slate-200 dark:border-slate-700/60 text-slate-950 dark:text-slate-100", accent: "#94a3b8" },
+  { id: "zinc", name: "Zinc", fill: "#27272a", fillLight: "#fafafa", fillDark: "#1a1a1d", border: "#3f3f46", bgClass: "bg-zinc-50 dark:bg-zinc-950/50 border-zinc-200 dark:border-zinc-700/60 text-zinc-950 dark:text-zinc-100", accent: "#a1a1aa" },
+  { id: "dark", name: "Obsidian", fill: "#18181b", fillLight: "#f4f4f5", fillDark: "#111113", border: "#27272a", bgClass: "bg-zinc-50 dark:bg-zinc-950/50 border-zinc-200 dark:border-zinc-700/60 text-zinc-950 dark:text-zinc-100", accent: "#71717a" },
 ];
 
 export const NOTE_COLOR_PRESETS: ColorPreset[] = [
@@ -122,14 +135,45 @@ export const DEFAULT_TYPE_FILL: Record<NodeType, string> = {
   note: "#fef3c7",
 };
 
+/**
+ * On-canvas card surfaces. Light in light mode, dark in dark mode.
+ *
+ * These were fixed dark fills with white text in both themes, which made the canvas
+ * a slab of near-black sitting on a white page. Each type now keeps a *tint* rather
+ * than a saturated fill, so the type is still readable at a glance without the card
+ * fighting the surface it sits on.
+ *
+ * `sky` and `indigo` are the Revibe purple and pink scales — see the remap in
+ * globals.css. Do not "correct" them to violet/rose.
+ */
 export const DEFAULT_TYPE_STYLES: Record<NodeType, string> = {
-  start: "bg-emerald-800/90 border-emerald-600/70 text-white",
-  step: "bg-zinc-800/90 border-zinc-600/60 text-white",
-  decision: "bg-amber-800/90 border-amber-600/70 text-white",
-  sub: "bg-indigo-800/90 border-indigo-500/70 border-dashed text-white",
-  ok: "bg-emerald-800/90 border-emerald-600/70 text-white",
-  fail: "bg-red-800/90 border-red-600/70 text-white",
+  start:
+    "bg-emerald-50 dark:bg-emerald-950/45 border-emerald-300 dark:border-emerald-700/60 text-emerald-950 dark:text-emerald-50",
+  step: "bg-white dark:bg-zinc-900/85 border-zinc-200 dark:border-zinc-700/70 text-zinc-900 dark:text-zinc-100",
+  decision:
+    "bg-sky-50 dark:bg-sky-950/45 border-sky-300 dark:border-sky-700/60 text-sky-950 dark:text-sky-50",
+  sub: "bg-indigo-50 dark:bg-indigo-950/45 border-indigo-300 dark:border-indigo-700/60 border-dashed text-indigo-950 dark:text-indigo-50",
+  ok: "bg-emerald-50 dark:bg-emerald-950/45 border-emerald-300 dark:border-emerald-700/60 text-emerald-950 dark:text-emerald-50",
+  fail: "bg-red-50 dark:bg-red-950/45 border-red-300 dark:border-red-700/60 text-red-950 dark:text-red-50",
   note: "bg-amber-50 dark:bg-amber-950/60 border-amber-200 dark:border-amber-700/60 text-amber-950 dark:text-amber-100",
+};
+
+/**
+ * The same surfaces as CSS variables, for the decision diamond.
+ *
+ * That shape is an SVG `<polygon fill="…">`, and an attribute cannot carry a `dark:`
+ * variant — so it reads a variable that globals.css redefines per theme. The hex map
+ * above it (`DEFAULT_TYPE_FILL`) stays put for the SVG exporter, which renders
+ * outside the document with no theme to read.
+ */
+export const NODE_FILL_VAR: Record<NodeType, string> = {
+  start: "var(--node-fill-start)",
+  step: "var(--node-fill-step)",
+  decision: "var(--node-fill-decision)",
+  sub: "var(--node-fill-sub)",
+  ok: "var(--node-fill-ok)",
+  fail: "var(--node-fill-fail)",
+  note: "var(--node-fill-note)",
 };
 
 export function getLuminance(hex: string): number {
@@ -153,7 +197,15 @@ export function getNodeStyle(
   color?: string,
   type: NodeType = "step",
   isNote = false
-): { className: string; customStyle: React.CSSProperties; fill: string; textColor: string } {
+): {
+  className: string;
+  customStyle: React.CSSProperties;
+  /** Literal hex — for the SVG exporter, which has no theme. */
+  fill: string;
+  /** Theme-aware equivalent — for anything rendered inside the document. */
+  themeFill: string;
+  textColor: string;
+} {
   const fill = getNodeFill(color, type, isNote);
 
   if (color && color.startsWith("#")) {
@@ -164,17 +216,29 @@ export function getNodeStyle(
       borderColor: lum > 0.6 ? "#cbd5e1" : color,
       color: textColor,
     };
-    return { className: "border shadow-md backdrop-blur-xs", customStyle, fill, textColor };
+    return { className: "border shadow-md backdrop-blur-xs", customStyle, fill, themeFill: color, textColor };
   }
 
   if (color) {
     const presets = isNote ? NOTE_COLOR_PRESETS : NODE_COLOR_PRESETS;
     const found = presets.find((p) => p.id === color);
     if (found) {
-      return { className: `${found.bgClass} shadow-md backdrop-blur-xs`, customStyle: {}, fill: found.fill, textColor: found.isLight ? "#18181b" : "#ffffff" };
+      return {
+        className: `${found.bgClass} shadow-md backdrop-blur-xs`,
+        customStyle: {},
+        fill: found.fill,
+        themeFill: `var(--node-preset-${found.id})`,
+        textColor: found.isLight ? "#18181b" : "#ffffff",
+      };
     }
   }
 
   const defaultCls = isNote ? DEFAULT_TYPE_STYLES.note : DEFAULT_TYPE_STYLES[type] || DEFAULT_TYPE_STYLES.step;
-  return { className: `${defaultCls} shadow-md backdrop-blur-xs`, customStyle: {}, fill, textColor: isNote ? "#18181b" : "#ffffff" };
+  return {
+    className: `${defaultCls} shadow-md backdrop-blur-xs`,
+    customStyle: {},
+    fill,
+    themeFill: isNote ? NODE_FILL_VAR.note : NODE_FILL_VAR[type] || NODE_FILL_VAR.step,
+    textColor: isNote ? "#18181b" : "#ffffff",
+  };
 }

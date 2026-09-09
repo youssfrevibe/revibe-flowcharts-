@@ -52,23 +52,35 @@ export interface EndpointDragStart {
   y: number;
 }
 
+/**
+ * One colour for every branch type.
+ *
+ * These used to be green for yes, red for no and amber for the third branch, which
+ * turned the canvas into a status map — a red line read as "something is wrong"
+ * rather than "this is the no path" — and duplicated what the branch label already
+ * says. The label is where "Yes" and "No" belong; the line only has to be followable.
+ *
+ * The value comes from a CSS variable so light and dark each get a tone that is
+ * actually legible against their surface. Selection and hover stay Revibe purple,
+ * which is now the only colour on the canvas that means anything.
+ */
 const STROKE: Record<string, string> = {
-  "": "stroke-slate-400 dark:stroke-slate-500",
-  cyes: "stroke-emerald-500 dark:stroke-emerald-400",
-  cno: "stroke-rose-500 dark:stroke-rose-400",
-  camber: "stroke-amber-500 dark:stroke-amber-400",
+  "": "flow-edge-stroke",
+  cyes: "flow-edge-stroke",
+  cno: "flow-edge-stroke",
+  camber: "flow-edge-stroke",
 };
 const FILL: Record<string, string> = {
-  "": "fill-slate-400 dark:fill-slate-500",
-  cyes: "fill-emerald-500 dark:fill-emerald-400",
-  cno: "fill-rose-500 dark:fill-rose-400",
-  camber: "fill-amber-500 dark:fill-amber-400",
+  "": "flow-edge-fill",
+  cyes: "flow-edge-fill",
+  cno: "flow-edge-fill",
+  camber: "flow-edge-fill",
 };
 const TEXT_FILL: Record<string, string> = {
-  "": "fill-slate-700 dark:fill-slate-200",
-  cyes: "fill-emerald-700 dark:fill-emerald-300",
-  cno: "fill-rose-700 dark:fill-rose-300",
-  camber: "fill-amber-700 dark:fill-amber-300",
+  "": "flow-edge-text",
+  cyes: "flow-edge-text",
+  cno: "flow-edge-text",
+  camber: "flow-edge-text",
 };
 
 export default function Connections({
@@ -92,26 +104,34 @@ export default function Connections({
   const handles = useMemo(() => (selected && onWaypointDown ? routeHandles(selected) : []), [selected, onWaypointDown]);
   const segments = useMemo(() => (selected && onSegmentDown ? routeSegments(selected) : []), [selected, onSegmentDown]);
 
-  // Size the SVG viewport to the world extent
-  const bounds = computeBounds(nodes, sizes);
-  const laneReach = LANE_GAP + routes.length * LANE_STEP + 80;
-  let minX = bounds ? bounds.minX : 0;
-  let minY = bounds ? bounds.minY : 0;
-  let maxX = bounds ? bounds.maxX : 1000;
-  let maxY = bounds ? bounds.maxY : 1000;
-  for (const r of routes) {
-    for (const p of r.pts) {
-      if (p.x < minX) minX = p.x;
-      if (p.y < minY) minY = p.y;
-      if (p.x > maxX) maxX = p.x;
-      if (p.y > maxY) maxY = p.y;
+  // Size the SVG viewport to the world extent.
+  //
+  // Memoised because it walks every node and every point of every route, and this
+  // component re-renders on each hover — moving the mouse across a 123-pathway diagram
+  // was recomputing the whole extent per pointer event for a viewBox that had not moved.
+  const { vbX, vbY, vbW, vbH } = useMemo(() => {
+    const bounds = computeBounds(nodes, sizes);
+    const laneReach = LANE_GAP + routes.length * LANE_STEP + 80;
+    let minX = bounds ? bounds.minX : 0;
+    let minY = bounds ? bounds.minY : 0;
+    let maxX = bounds ? bounds.maxX : 1000;
+    let maxY = bounds ? bounds.maxY : 1000;
+    for (const r of routes) {
+      for (const p of r.pts) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
     }
-  }
-  const MARGIN = Math.max(240, laneReach);
-  const vbX = minX - MARGIN;
-  const vbY = minY - MARGIN;
-  const vbW = maxX - minX + MARGIN * 2;
-  const vbH = maxY - minY + MARGIN * 2;
+    const MARGIN = Math.max(240, laneReach);
+    return {
+      vbX: minX - MARGIN,
+      vbY: minY - MARGIN,
+      vbW: maxX - minX + MARGIN * 2,
+      vbH: maxY - minY + MARGIN * 2,
+    };
+  }, [nodes, sizes, routes]);
 
   return (
     <svg
@@ -320,7 +340,7 @@ const Edge = memo(function Edge({
           selected || hovered ? "" : STROKE[c.type]
         }`}
         stroke={selected ? "#8b5cf6" : hovered ? "#a78bfa" : undefined}
-        strokeWidth={selected ? (isBold ? 4 : 2.75) : isBold ? 3.25 : hovered ? 2.5 : 1.75}
+        strokeWidth={selected ? (isBold ? 4.5 : 3.25) : isBold ? 3.75 : hovered ? 3 : 2.25}
         strokeLinejoin="round"
         strokeLinecap="round"
         markerEnd={`url(#arrow${isBold ? "-bold" : ""}${active ? "-sel" : c.type ? "-" + c.type : ""})`}
