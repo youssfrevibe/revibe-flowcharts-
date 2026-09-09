@@ -49,11 +49,20 @@ interface Props {
    * it. Pinning the card to the stored geometry is what makes the reader's diagram match
    * the editor's line for line. Ignored when the node has no captured size. */
   lockSize?: boolean;
-  onMouseDown: (e: React.MouseEvent) => void;
-  onDoubleClick: () => void;
-  onContextMenu: (e: React.MouseEvent) => void;
-  onPortMouseDown: (e: React.MouseEvent, port: string) => void;
-  onPortMouseUp: (e: React.MouseEvent, port: string) => void;
+  /**
+   * Every callback takes the node back as an argument rather than closing over it.
+   *
+   * This component is `React.memo`'d, and memo compares props by identity. When the
+   * parent passed `onMouseDown={(e) => onNodeMouseDown(e, node)}` it minted a new
+   * function per card per render, so memo never bailed and all 109 cards re-rendered
+   * on every drag frame. Handing the node back lets the parent pass one stable
+   * function to every card.
+   */
+  onMouseDown: (e: React.MouseEvent, node: FlowNode) => void;
+  onDoubleClick: (node: FlowNode) => void;
+  onContextMenu: (e: React.MouseEvent, node: FlowNode) => void;
+  onPortMouseDown: (e: React.MouseEvent, node: FlowNode, port: string) => void;
+  onPortMouseUp?: (e: React.MouseEvent, node: FlowNode, port: string) => void;
   onQuickAdd?: (fromNodeId: string, fromPort: Port, targetType?: NodeType) => void;
   onUpdate?: (updated: FlowNode) => void;
   onDelete?: (id: string) => void;
@@ -106,9 +115,9 @@ function FlowNodeCard({
       if ((e.target as HTMLElement).tagName === "TEXTAREA" || (e.target as HTMLElement).tagName === "INPUT") return;
       if (e.button !== 0) return;
       e.stopPropagation();
-      onMouseDown(e);
+      onMouseDown(e, node);
     },
-    [onMouseDown]
+    [onMouseDown, node]
   );
 
   const isDetailed = viewMode === "detailed";
@@ -216,9 +225,9 @@ function FlowNodeCard({
         onMouseDown={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          onPortMouseDown(e, port);
+          onPortMouseDown(e, node, port);
         }}
-        onMouseUp={(e) => onPortMouseUp(e, port)}
+        onMouseUp={(e) => onPortMouseUp?.(e, node, port)}
       >
         <div className="w-2.5 h-2.5 rounded-full bg-sky-400 dark:bg-sky-400 border-2 border-white dark:border-zinc-900 shadow-md group-hover/port:scale-125 transition-transform" />
         {onQuickAdd && (
@@ -263,9 +272,9 @@ function FlowNodeCard({
     onDoubleClick: (e: React.MouseEvent) => {
       e.stopPropagation();
       if (isNote) setIsEditingNote(true);
-      else onDoubleClick();
+      else onDoubleClick(node);
     },
-    onContextMenu,
+    onContextMenu: (e: React.MouseEvent) => onContextMenu(e, node),
   };
 
   /* ------------------------------ DECISION: Refined Diamond ------------------------------ */

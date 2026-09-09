@@ -2573,6 +2573,64 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
 
   /* ------------------------------- render ------------------------------ */
   const selectedEdge = selectedConn ? routeById.get(selectedConn) : undefined;
+  /**
+   * Stable callbacks for the memoised node cards.
+   *
+   * FlowNodeCard is React.memo'd, but the parent used to mint a fresh arrow function
+   * per card per render — so memo never bailed and one parent render meant a render of
+   * every card on screen. Measured on the 109-node return-claims document: 436 card
+   * renders across 4 drag frames, exactly 4 x 109.
+   *
+   * These wrappers never change identity; the ref carries the fresh closures, the same
+   * idiom `handlersRef` and `keyRef` already use here. A drag now re-renders only the
+   * cards whose own node object actually changed.
+   */
+  const cardFns = useRef({
+    onNodeMouseDown,
+    onPortMouseDown,
+    nodeContextMenu,
+    setEditNode,
+    deleteSelection,
+    select,
+    handleQuickAdd,
+    saveNode,
+    readOnly,
+  });
+  cardFns.current = {
+    onNodeMouseDown,
+    onPortMouseDown,
+    nodeContextMenu,
+    setEditNode,
+    deleteSelection,
+    select,
+    handleQuickAdd,
+    saveNode,
+    readOnly,
+  };
+
+  const cardMouseDown = useCallback((e: React.MouseEvent, n: FlowNode) => cardFns.current.onNodeMouseDown(e, n), []);
+  const cardPortDown = useCallback(
+    (e: React.MouseEvent, n: FlowNode, port: string) => cardFns.current.onPortMouseDown(e, n, port),
+    []
+  );
+  const cardContextMenu = useCallback((e: React.MouseEvent, n: FlowNode) => {
+    if (cardFns.current.readOnly) return;
+    cardFns.current.nodeContextMenu(e, n);
+  }, []);
+  const cardDoubleClick = useCallback((n: FlowNode) => {
+    if (cardFns.current.readOnly) return;
+    cardFns.current.setEditNode(n);
+  }, []);
+  const cardDelete = useCallback((id: string) => {
+    cardFns.current.select([id]);
+    cardFns.current.deleteSelection();
+  }, []);
+  const cardQuickAdd = useCallback(
+    (fromId: string, fromPort: Port, targetType?: NodeType) => cardFns.current.handleQuickAdd(fromId, fromPort, targetType),
+    []
+  );
+  const cardUpdate = useCallback((updated: FlowNode) => cardFns.current.saveNode(updated), []);
+
   const selectedNodes = view.nodes.filter((n) => selectedIds.includes(n.id));
 
   // The step a reader has open. Viewer cards carry almost nothing on purpose — a card
@@ -2801,17 +2859,13 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
                     isDropTarget={dropTarget === node.id}
                     viewMode={mode === "view" ? "standard" : viewMode}
                     lockSize={mode === "view"}
-                    onMouseDown={(e) => onNodeMouseDown(e, node)}
-                    onDoubleClick={() => !readOnly && setEditNode(node)}
-                    onContextMenu={(e) => !readOnly && nodeContextMenu(e, node)}
-                    onPortMouseDown={(e, port) => onPortMouseDown(e, node, port)}
-                    onPortMouseUp={() => {}}
-                    onQuickAdd={readOnly ? undefined : handleQuickAdd}
-                    onUpdate={saveNode}
-                    onDelete={(id) => {
-                      select([id]);
-                      deleteSelection();
-                    }}
+                    onMouseDown={cardMouseDown}
+                    onDoubleClick={cardDoubleClick}
+                    onContextMenu={cardContextMenu}
+                    onPortMouseDown={cardPortDown}
+                    onQuickAdd={readOnly ? undefined : cardQuickAdd}
+                    onUpdate={cardUpdate}
+                    onDelete={cardDelete}
                   />
                 ))}
               </div>

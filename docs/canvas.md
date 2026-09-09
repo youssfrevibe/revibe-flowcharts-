@@ -216,3 +216,20 @@ yes, red for no and amber for the third branch, which read as a status map — a
 line looked like something was wrong rather than "this is the no path" — and
 duplicated what the branch label already says. Selection and hover are Revibe purple,
 now the only colour on the canvas that carries meaning.
+
+## Why the node cards take their node back
+
+`FlowNodeCard` is `React.memo`'d, and memo compares props by identity. Every card
+callback therefore takes the node as an **argument** rather than the parent closing
+over it — `onMouseDown(e, node)`, not `onMouseDown={(e) => handler(e, node)}`.
+
+The parent's versions are deliberately routed through `cardFns`, a ref reassigned
+during render (the same idiom as `handlersRef` and `keyRef`), so the functions handed
+to the cards never change identity even though the closures inside them are fresh.
+
+> **Trap.** Passing an inline arrow to any card prop silently costs a full re-render
+> of every card on screen, on every frame of a drag. It looks harmless and it type
+> checks. Measured on the 109-node return-claims document: 436 card renders across
+> 4 drag frames before (exactly 4 × 109), 24 after. Several of those handlers are
+> plain functions rather than `useCallback`, so passing them straight through would
+> defeat memo just as thoroughly — go through `cardFns`.
