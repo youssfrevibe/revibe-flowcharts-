@@ -5,23 +5,22 @@
  * and before React is involved at all. This is what applies the saved theme without a
  * flash of the wrong one.
  *
- * React logs "Encountered a script tag while rendering React component" in development
- * whenever a component renders a `<script>`. That warning is correct in general and
- * wrong here: on a hard navigation this tag is part of the server-rendered HTML, so the
- * browser really does execute it.
+ * React logs "Encountered a script tag while rendering React component" whenever a
+ * component renders a `<script>` during a *client* render. Server-rendered scripts are
+ * fine, and on a hard navigation this tag is part of the server HTML, so the browser
+ * really does execute it.
  *
- * **The warning is not suppressed.** Next documents a workaround — emit `text/javascript`
- * on the server and `text/plain` on the client so the client render produces nothing
- * runnable — and it is implemented below, including `"use client"` so the swap actually
- * re-evaluates in the browser. It does not silence this React version: verified from a
- * clean tab, the warning is present with the script and absent without it. So treat it
- * as dev-only noise with no production effect (React strips dev warnings from production
- * builds), not as something already handled.
+ * That warning used to fire on every load, and chasing it here was the wrong place to
+ * look: it was a *symptom*. FlowCanvas seeded its state from localStorage inside
+ * `useState` initialisers, so the client's first render disagreed with the server's;
+ * React discarded the server DOM and re-rendered the whole tree on the client, and that
+ * client render is what tripped the warning. Fixing the mismatch silenced both. Proven
+ * by A/B in fresh tabs: with a cached document, hydration failure plus the warning; with
+ * the cache cleared, silence.
  *
- * Removing the tag *would* silence it, at the cost of a visible theme flash on every
- * load for anyone whose saved theme differs from their OS setting. That trade is not
- * worth it. A hydration error also appears in the console on this page; it is unrelated
- * — it reproduces with this script removed entirely.
+ * The type swap below (executable on the server, inert on the client) is Next's
+ * documented belt-and-braces for the same warning and is kept, but it was not what
+ * fixed it.
  *
  * See node_modules/next/dist/docs/01-app/02-guides/preventing-flash-before-hydration.md
  */

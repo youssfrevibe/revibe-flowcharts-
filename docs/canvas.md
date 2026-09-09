@@ -113,6 +113,17 @@ so a reader can never write geometry into the document.
 - `loaded` — something is painted (may be the stale cache).
 - `docSettled` — the cloud fetch for **this slug** has landed.
 
+Both are set from the **cache-paint layout effect** and the cloud effect, never from a
+`useState` initialiser.
+
+> **Trap.** Seeding `data` or `loaded` by reading `localStorage` in a `useState`
+> initialiser is a hydration mismatch: the server has no cache, the client does, so the
+> two first renders disagree and React throws away the server DOM and re-renders the whole
+> tree on the client. It is slower than the instant paint it was trying to buy, and it also
+> made the root layout's inline theme script trip React's script-tag warning — a symptom
+> that sent a previous debugging session chasing the wrong file. Read the cache in a
+> **layout effect**: after hydration, still before paint.
+
 > **Trap.** `loaded` flips as soon as the `localStorage` cache paints, which is
 > *before* the cloud copy replaces it. Anything that rewrites the document on open
 > must key off `docSettled`, or the cloud response silently undoes the rewrite. This

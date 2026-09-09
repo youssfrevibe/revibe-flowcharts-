@@ -77,21 +77,12 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const [user, setUser] = useState<Collaborator | null>(null);
   const [askName, setAskName] = useState(false);
 
-  // Initial state: load from cache immediately if present in browser, else fallback to default
-  const [data, setData] = useState<FlowData>(() => {
-    if (typeof window !== "undefined") {
-      const cached = getCachedData(slug);
-      if (cached) return cached;
-    }
-    return getDefaultData(slug);
-  });
+  // The first render must be identical on the server and the client, so it starts from
+  // the default document and never touches localStorage. The cache is painted in a layout
+  // effect below instead — see the note there for why this matters.
+  const [data, setData] = useState<FlowData>(() => getDefaultData(slug));
   const dataRef = useRef<FlowData>(data);
-  const [loaded, setLoaded] = useState<boolean>(() => {
-    if (typeof window !== "undefined") {
-      return Boolean(getCachedData(slug));
-    }
-    return false;
-  });
+  const [loaded, setLoaded] = useState(false);
 
   // Selection lives in a shared Zustand store. The refs mirror it because event handlers
   // read the selection synchronously, before React has re-rendered — so every writer has
@@ -479,18 +470,34 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     [slug]
   );
 
+  /* --------------------------- cache paint ----------------------------- */
+  /**
+   * Paints the cached document, and resets per-slug view state because navigating
+   * between diagrams reuses this component.
+   *
+   * A **layout effect**, deliberately, and never a `useState` initialiser. Reading
+   * localStorage during the initial render makes the client's first render differ from
+   * the server's, and React answers a mismatch by discarding the server DOM and
+   * re-rendering the whole tree on the client — which is both slower than the paint it
+   * was trying to save and the reason the root layout's inline script tripped React's
+   * script-tag warning. Measured: with a cached document the console showed a hydration
+   * failure, with the cache cleared it was silent.
+   *
+   * A layout effect runs after hydration but before the browser paints, so the cache
+   * still appears instantly and both renders agree on the first pass.
+   */
+  useLayoutEffect(() => {
+    setDocSettled(false);
+    const cached = getCachedData(slug);
+    dataRef.current = cached ?? getDefaultData(slug);
+    setData(dataRef.current);
+    setLoaded(Boolean(cached));
+  }, [slug]);
+
   /* --------------------------- cloud load ------------------------------ */
   useEffect(() => {
     let cancelled = false;
-    // Navigating between diagrams reuses this component (same route), so reset per-slug view state.
-    setLoaded(false);
-    setDocSettled(false);
-    // Instant paint from local cache (post-mount, so no hydration mismatch).
     const cached = getCachedData(slug);
-    if (cached) {
-      dataRef.current = cached;
-      setData(cached);
-    }
     (async () => {
       const cloud = await fetchCloudData(slug);
       if (cancelled) return;
