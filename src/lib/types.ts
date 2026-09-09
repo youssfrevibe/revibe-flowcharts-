@@ -69,6 +69,8 @@ export interface FlowNode {
    * meaningful on levels 1 and 2. `node.delete` strips ids from here as it cascades, so
    * this should not dangle — `childrenOf` still tolerates it if an older client wrote it. */
   children?: string[];
+  /** The reader-facing facts shown in the detail panel. See [[NodeFacts]]. */
+  facts?: NodeFacts;
   /** @deprecated Legacy single stage — migrated by normalize() into `internalStage` /
    * `externalStage`. Kept on the type so old JSON parses cleanly. */
   stage?: string;
@@ -85,6 +87,54 @@ export interface FlowNode {
   /** Who performs this action — controls the card's border color so responsibility is
    * visually scannable across the flow. See [[Actor]]. */
   actor?: Actor;
+}
+
+/** Where a number really lives, so an authored figure can later be replaced by a live
+ * query without reshaping the document. Resolved server-side only — the browser has no
+ * service-role key, and these tables are not the flowchart database. */
+export interface DataBinding {
+  table: string;
+  column?: string;
+  filter?: string;
+  agg?: "count" | "sum";
+}
+
+/** A figure in the facts table. `value` is what the panel shows today; when `source` is
+ * present a live query can replace it and `value` becomes the offline fallback. */
+export interface Metric {
+  value: string | number;
+  note?: string;
+  source?: DataBinding;
+}
+
+/** Who actually moves a stage, as observed counts rather than who is nominally
+ * responsible for it. The gap between those two is usually the whole point. */
+export interface Mover {
+  actor: Actor;
+  count: number;
+}
+
+/** A few real rows from the screen this stage is worked on, so a reader recognises it. */
+export interface FactPreview {
+  caption?: string;
+  columns: string[];
+  rows: string[][];
+}
+
+/** The reader-facing facts for one step: shown as a table in the detail panel's Human
+ * view and serialised verbatim into its Claude view. Every field is optional, so a step
+ * with no facts renders its description alone rather than an empty table. */
+export interface NodeFacts {
+  /** Where the work happens — e.g. "New OMS · QuiQup · Supplier portal". */
+  where?: string;
+  /** Volume over the reporting window. */
+  volume?: Metric;
+  /** Observed movers, rendered as a 100% bar. */
+  movers?: Mover[];
+  /** The column a reader can look this stage up by — e.g. "order_product_claims_new stage". */
+  dataRef?: string;
+  /** A sample of the list this stage appears in. */
+  preview?: FactPreview;
 }
 
 export type ConnType = "" | "cyes" | "cno" | "camber";

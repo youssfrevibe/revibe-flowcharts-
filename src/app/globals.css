@@ -14,6 +14,42 @@
 /* ------------------------------------------------------------------ *
  * Editor Surface & Elevation Tokens (Tactile, Bespoke Design System)
  * ------------------------------------------------------------------ */
+/* Revibe brand palette (revibe.me). Fixed values — these are the brand, so they do not
+   change between light and dark; only the neutral --ui-* surfaces around them do. */
+:root {
+  --rv-pink: #ff2e63;
+  --rv-pink-deep: #e01e4f;
+  --rv-pink-soft: #ffe5ee;
+  --rv-purple: #7c3aed;
+  --rv-purple-deep: #5b21b6;
+  --rv-purple-soft: #f0e5ff;
+  --rv-lavender: #faf5ff;
+  --rv-lavender-deep: #f5f0ff;
+  --rv-gradient: linear-gradient(135deg, #ff2e63 0%, #7c3aed 100%);
+  --rv-gradient-soft: linear-gradient(135deg, #ffe5ee 0%, #f0e5ff 100%);
+  --rv-success: #10b981;
+  --rv-warning: #f59e0b;
+  --rv-danger: #ef4444;
+  --rv-info: #3b82f6;
+}
+
+.dark {
+  /* On near-black the soft tints become washes rather than pastels, or nothing reads. */
+  --rv-pink-soft: rgba(255, 46, 99, 0.16);
+  --rv-purple-soft: rgba(124, 58, 237, 0.18);
+  --rv-lavender: rgba(124, 58, 237, 0.06);
+  --rv-lavender-deep: rgba(124, 58, 237, 0.1);
+  --rv-gradient-soft: linear-gradient(135deg, rgba(255, 46, 99, 0.14) 0%, rgba(124, 58, 237, 0.16) 100%);
+}
+
+.rv-gradient-text {
+  background: var(--rv-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
 :root {
   --ui-canvas: #f0f1f3;
   --ui-panel: #ffffff;

@@ -14,6 +14,10 @@ interface Props {
   peers: Collaborator[];
   connected: boolean;
   viewMode: "standard" | "detailed";
+  /** Editor chrome vs reader chrome — a different audience, not a denser card. */
+  mode: "edit" | "view";
+  /** True when the diagram was opened through a view-only link, which pins `mode`. */
+  modeLocked?: boolean;
   zoom: number;
   showLeft: boolean;
   showRight: boolean;
@@ -26,6 +30,7 @@ interface Props {
   onRename: (title: string, subtitle: string) => void;
   onEditName: () => void;
   onViewMode: (m: "standard" | "detailed") => void;
+  onMode: (m: "edit" | "view") => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onZoomReset: () => void;
@@ -312,6 +317,33 @@ export default function TopBar(p: Props) {
             )}
           </div>
         )}
+
+        {/* Editor vs reader. A different audience, not a denser card — which is why this
+            sits apart from the Detailed/Compact toggle beside it. Pinned on a ?view=1 link. */}
+        <div
+          className="flex items-center rounded-lg border p-0.5"
+          style={{ borderColor: "var(--ui-border-soft)", background: "var(--ui-input)" }}
+        >
+          {(["edit", "view"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              disabled={p.modeLocked && m === "edit"}
+              onClick={() => p.onMode(m)}
+              title={
+                m === "edit"
+                  ? p.modeLocked
+                    ? "This diagram was opened read-only"
+                    : "Editor"
+                  : "Reader view — simple cards, detail in the side panel"
+              }
+              className="ui-btn h-7 px-2.5 text-[11.5px] font-semibold"
+              style={p.mode === m ? { background: "var(--rv-purple)", color: "#fff" } : undefined}
+            >
+              {m === "edit" ? "Edit" : "View"}
+            </button>
+          ))}
+        </div>
 
         {/* View Mode Toggle */}
         <button

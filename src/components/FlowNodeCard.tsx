@@ -42,6 +42,13 @@ interface Props {
   /** Highlighted because a pathway end is being dragged over this shape. */
   isDropTarget?: boolean;
   viewMode?: "standard" | "detailed";
+  /** Render into the node's frozen `size` instead of sizing to content.
+   *
+   * Reader mode shows a deliberately sparser card, which would measure smaller than the
+   * box routing was computed against — and pathways would attach to empty space beside
+   * it. Pinning the card to the stored geometry is what makes the reader's diagram match
+   * the editor's line for line. Ignored when the node has no captured size. */
+  lockSize?: boolean;
   onMouseDown: (e: React.MouseEvent) => void;
   onDoubleClick: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
@@ -57,6 +64,7 @@ function FlowNodeCard({
   isSelected,
   isDropTarget,
   viewMode = "standard",
+  lockSize = false,
   onMouseDown,
   onDoubleClick,
   onContextMenu,
@@ -243,7 +251,12 @@ function FlowNodeCard({
     "aria-label": `${TYPE_LABELS[node.type]}: ${node.label}`,
     tabIndex: 0,
     className: `absolute cursor-move select-none group z-10 transition-transform duration-100 ${stateShadow}`,
-    style: { left: node.x, top: node.y } as React.CSSProperties,
+    style: {
+      left: node.x,
+      top: node.y,
+      // See `lockSize`: reader cards occupy the frozen box so pathways still meet an edge.
+      ...(lockSize && node.size ? { width: node.size.w, height: node.size.h } : null),
+    } as React.CSSProperties,
     "data-node-id": node.id,
     onMouseDown: handleMouseDown,
     onDoubleClick: (e: React.MouseEvent) => {

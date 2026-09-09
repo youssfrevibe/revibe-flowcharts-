@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import { useCanvasStore } from "@/lib/store";
 import { FlowNode, FlowConnection, FlowData, NodeType, ConnType, Op, Collaborator, Port, TextPosition, Pt, Actor, DetailLevel } from "@/lib/types";
-import { atLevel, populatedLevels, mergeNodes, mergeConnections, DEFAULT_LEVEL } from "@/lib/levels";
+import { atLevel, populatedLevels, mergeNodes, mergeConnections, levelOf, DEFAULT_LEVEL } from "@/lib/levels";
 import {
   getDefaultData,
   getCachedData,
@@ -26,6 +26,8 @@ import FlowNodeCard from "./FlowNodeCard";
 import TopBar from "./TopBar";
 import Toolbar from "./Toolbar";
 import LayersPanel from "./LayersPanel";
+import LevelSidebar from "./LevelSidebar";
+import NodeDetailPanel from "./NodeDetailPanel";
 import InspectorPanel, { AlignKind } from "./InspectorPanel";
 import ContextMenu, { ContextMenuItem } from "./ContextMenu";
 import Connections, { WaypointDragStart, SegmentDragStart, EndpointDragStart } from "./Connections";
@@ -62,7 +64,14 @@ const GRID = 16;
 const snapVal = (v: number, on: boolean) => (on ? Math.round(v / GRID) * GRID : Math.round(v));
 
 // Collaborative flowchart editor: cloud-synced, live multi-user, full keyboard + editing suite.
-export default function FlowCanvas({ slug, title, subtitle, exportFilename, readOnly = false }: FlowCanvasProps) {
+export default function FlowCanvas({ slug, title, subtitle, exportFilename, readOnly: readOnlyProp = false }: FlowCanvasProps) {
+  /** Editor or reader chrome. A `?view=1` link pins this to "view" and the toggle is
+   *  disabled; otherwise the same person switches between the two. */
+  const [mode, setMode] = useState<"edit" | "view">(readOnlyProp ? "view" : "edit");
+  /** Deliberately shadows the prop. Viewer mode locks the document exactly the way a
+   *  view-only link does, so every existing `readOnly` guard — `commit`, `setTransient`,
+   *  undo/redo, nudge, reset, restore — covers it without being rewritten. */
+  const readOnly = readOnlyProp || mode === "view";
   const [user, setUser] = useState<Collaborator | null>(null);
   const [askName, setAskName] = useState(false);
 
@@ -2540,6 +2549,29 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const selectedEdge = selectedConn ? routeById.get(selectedConn) : undefined;
   const selectedNodes = view.nodes.filter((n) => selectedIds.includes(n.id));
 
+  // The step a reader has open. Viewer cards carry almost nothing on purpose — a card
+  // dense enough to be complete is too dense to scan — so the detail lives in the panel.
+  const detailNode = useMemo(
+    () => (selectedIds.length === 1 ? (view.nodes.find((n) => n.id === selectedIds[0]) ?? null) : null),
+    [selectedIds, view.nodes]
+  );
+
+  // Signposts for that panel: where flow arrives from and departs to. The label comes off
+  // the connection, so a branch reads "Yes" or "missing docs" rather than just a step name.
+  const neighbours = useMemo(() => {
+    if (!detailNode) return { incoming: [], outgoing: [] };
+    const byId = new Map(view.nodes.map((n) => [n.id, n]));
+    const step = (id: string, via?: string) => ({
+      id,
+      label: byId.get(id)?.label ?? id,
+      via: via || undefined,
+    });
+    return {
+      incoming: view.connections.filter((c) => c.to === detailNode.id).map((c) => step(c.from, c.label)),
+      outgoing: view.connections.filter((c) => c.from === detailNode.id).map((c) => step(c.to, c.label)),
+    };
+  }, [detailNode, view]);
+
   return (
     <div className="flex flex-col h-screen overflow-hidden" style={{ background: "var(--ui-canvas)" }}>
       <TopBar
@@ -2561,6 +2593,9 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         onRename={(t, sub) => handleSaveTitle(t, sub)}
         onEditName={() => setAskName(true)}
         onViewMode={setViewMode}
+        mode={mode}
+        modeLocked={readOnlyProp}
+        onMode={setMode}
         onZoomIn={() => {
           const r = cwRef.current!.getBoundingClientRect();
           zoomAt(1.2, r.width / 2, r.height / 2);
@@ -2591,25 +2626,42 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       <div className="flex-1 flex min-h-0">
         {/* Left rail — everything in the diagram, findable by name. Hidden on narrow
             windows so the canvas keeps its width on a laptop screen. */}
-        {showLeft && (
-          <LayersPanel
-            nodes={view.nodes}
-            connections={view.connections}
-            selectedIds={selectedIds}
-            selectedConn={selectedConn}
-            readOnly={readOnly}
-            onSelectNode={(id, additive) =>
-              select(additive ? [...new Set([...selRef.current, id])] : [id])
-            }
-            onSelectConn={selectConn}
-            onRenameNode={renameNode}
-            onFocusNode={focusNode}
-            onDeleteNode={(id) => {
-              select([id]);
-              deleteSelection();
-            }}
-          />
-        )}
+        {showLeft &&
+          (mode === "view" ? (
+            /* Readers need orientation — how much detail, who is involved, where the
+               process can end — not a list of every node by name. */
+            <LevelSidebar
+              data={data}
+              view={view}
+              level={level}
+              available={availableLevels}
+              onLevel={setLevel}
+              title={projectTitle}
+              subtitle={projectSubtitle}
+              onSelectNode={(id) => {
+                select([id]);
+                focusNode(id);
+              }}
+            />
+          ) : (
+            <LayersPanel
+              nodes={view.nodes}
+              connections={view.connections}
+              selectedIds={selectedIds}
+              selectedConn={selectedConn}
+              readOnly={readOnly}
+              onSelectNode={(id, additive) =>
+                select(additive ? [...new Set([...selRef.current, id])] : [id])
+              }
+              onSelectConn={selectConn}
+              onRenameNode={renameNode}
+              onFocusNode={focusNode}
+              onDeleteNode={(id) => {
+                select([id]);
+                deleteSelection();
+              }}
+            />
+          ))}
 
         {/* Canvas */}
         <div
@@ -2700,7 +2752,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
                     node={node}
                     isSelected={selectedIds.includes(node.id)}
                     isDropTarget={dropTarget === node.id}
-                    viewMode={viewMode}
+                    viewMode={mode === "view" ? "standard" : viewMode}
+                    lockSize={mode === "view"}
                     onMouseDown={(e) => onNodeMouseDown(e, node)}
                     onDoubleClick={() => !readOnly && setEditNode(node)}
                     onContextMenu={(e) => !readOnly && nodeContextMenu(e, node)}
@@ -2780,8 +2833,31 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         </div>
 
         {/* Right rail — properties for whatever is selected. */}
-        {showRight && (
-          <InspectorPanel
+        {showRight &&
+          (mode === "view" ? (
+            detailNode && (
+              <NodeDetailPanel
+                node={detailNode}
+                data={view}
+                incoming={neighbours.incoming}
+                outgoing={neighbours.outgoing}
+                onClose={() => select([])}
+                onGoTo={(id) => {
+                  select([id]);
+                  focusNode(id);
+                }}
+                onDrillDown={(child) => {
+                  // Stepping into what a summary collapses means dropping a level and
+                  // landing on that child, which is the whole point of `children`.
+                  const target = (levelOf(child) as DetailLevel) ?? DEFAULT_LEVEL;
+                  setLevel(target);
+                  select([child.id]);
+                  setTimeout(() => focusNode(child.id), 60);
+                }}
+              />
+            )
+          ) : (
+            <InspectorPanel
             nodes={view.nodes}
             selected={selectedNodes}
             conn={selectedEdge?.conn ?? null}
@@ -2800,8 +2876,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
             onDeleteConn={() => selectedConn && deleteConn(selectedConn)}
             onChainSelected={chainSelectedNodes}
             onAutoConnectAll={autoConnectAllNodes}
-          />
-        )}
+            />
+          ))}
       </div>
 
       <input type="file" ref={fileInputRef} onChange={handleImportJSON} accept=".json" className="hidden" />

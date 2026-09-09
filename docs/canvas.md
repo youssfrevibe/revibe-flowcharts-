@@ -80,6 +80,23 @@ editor got there first instead of overwriting each other with their own measurem
 > mounts, and every consumer still falls back to `210×84`. Culling, virtualisation and
 > lazy rendering therefore remain dangerous for uncaptured nodes.
 
+### Editor and reader mode
+
+`mode` is `"edit" | "view"`, and it does two things: swaps the chrome — `LayersPanel` →
+`LevelSidebar`, `InspectorPanel` → `NodeDetailPanel`, dense cards → sparse ones — and
+locks the document.
+
+The lock works by **shadowing the prop**. Inside the component, `readOnly` is
+`readOnlyProp || mode === "view"`, so every guard already written against `readOnly`
+(`commit`, `setTransient`, undo, redo, nudge, reset, restore) covers reader mode without
+being rewritten. A `?view=1` link pins the mode and disables the toggle.
+
+> **Trap.** Reader cards are sparser, so they would measure smaller than the box routing
+> was computed against. They are therefore pinned to the node's frozen `size` via
+> `lockSize` on `FlowNodeCard` — without it, pathways meet empty space beside the card.
+> Size capture is blocked in reader mode for the mirror-image reason: otherwise the
+> reader's smaller measurements would be written into the document as the truth.
+
 ### Load flags
 - `loaded` — something is painted (may be the stale cache).
 - `docSettled` — the cloud fetch for **this slug** has landed.
