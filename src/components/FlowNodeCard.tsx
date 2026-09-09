@@ -42,13 +42,6 @@ interface Props {
   /** Highlighted because a pathway end is being dragged over this shape. */
   isDropTarget?: boolean;
   viewMode?: "standard" | "detailed";
-  /** Render into the node's frozen `size` instead of sizing to content.
-   *
-   * Reader mode shows a deliberately sparser card, which would measure smaller than the
-   * box routing was computed against — and pathways would attach to empty space beside
-   * it. Pinning the card to the stored geometry is what makes the reader's diagram match
-   * the editor's line for line. Ignored when the node has no captured size. */
-  lockSize?: boolean;
   /**
    * Every callback takes the node back as an argument rather than closing over it.
    *
@@ -73,7 +66,6 @@ function FlowNodeCard({
   isSelected,
   isDropTarget,
   viewMode = "standard",
-  lockSize = false,
   onMouseDown,
   onDoubleClick,
   onContextMenu,
@@ -264,8 +256,11 @@ function FlowNodeCard({
     style: {
       left: node.x,
       top: node.y,
-      // See `lockSize`: reader cards occupy the frozen box so pathways still meet an edge.
-      ...(lockSize && node.size ? { width: node.size.w, height: node.size.h } : null),
+      // Geometry is a property of the document, not of how dense the card happens to
+      // be right now. A card never renders smaller than its frozen box, in either mode
+      // and at either density, or the pathways routed against that box would meet empty
+      // space beside it. It may still grow — see the grow-only capture in FlowCanvas.
+      ...(node.size ? { minWidth: node.size.w, minHeight: node.size.h } : null),
     } as React.CSSProperties,
     "data-node-id": node.id,
     onMouseDown: handleMouseDown,
@@ -284,7 +279,7 @@ function FlowNodeCard({
     // Without it the diamond resizes with density (250x175 detailed vs 210x151 standard)
     // while routing still uses the stored box, and every pathway into a decision ends in
     // mid-air. Measured, not guessed: this was six detached decisions on the demo chart.
-    const locked = lockSize && node.size ? node.size : null;
+    const locked = node.size ?? null;
     const w = locked ? locked.w : isDetailed ? 250 : widthStyle.width ? (widthStyle.width as number) : 210;
     const h = locked ? locked.h : isDetailed ? 175 : Math.round(w * 0.72);
 

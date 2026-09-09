@@ -614,8 +614,20 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     if (readOnly || !docSettled || arranging) return;
     const t = setTimeout(() => {
       const patched = dataRef.current.nodes
-        .filter((n) => !n.size && measured.has(n.id))
-        .map((n) => ({ ...n, size: { ...measured.get(n.id)! } }));
+        .filter((n) => {
+          const m = measured.get(n.id);
+          if (!m) return false;
+          if (!n.size) return true;
+          // Grow only. A card measuring *smaller* than its stored box is almost always a
+          // density change, and shrinking would move every pathway that meets it. A card
+          // measuring larger is the one case where the stored box is genuinely wrong —
+          // real content that no longer fits — so routing has to follow it.
+          return m.w > n.size.w + 1 || m.h > n.size.h + 1;
+        })
+        .map((n) => {
+          const m = measured.get(n.id)!;
+          return { ...n, size: { w: Math.max(m.w, n.size?.w ?? 0), h: Math.max(m.h, n.size?.h ?? 0) } };
+        });
       if (!patched.length) return;
       const byId = new Map(patched.map((n) => [n.id, n]));
       commit(
@@ -2857,8 +2869,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
                     node={node}
                     isSelected={selectedIds.includes(node.id)}
                     isDropTarget={dropTarget === node.id}
-                    viewMode={mode === "view" ? "standard" : viewMode}
-                    lockSize={mode === "view"}
+                    viewMode={viewMode}
                     onMouseDown={cardMouseDown}
                     onDoubleClick={cardDoubleClick}
                     onContextMenu={cardContextMenu}

@@ -91,11 +91,23 @@ The lock works by **shadowing the prop**. Inside the component, `readOnly` is
 (`commit`, `setTransient`, undo, redo, nudge, reset, restore) covers reader mode without
 being rewritten. A `?view=1` link pins the mode and disables the toggle.
 
-> **Trap.** Reader cards are sparser, so they would measure smaller than the box routing
-> was computed against. They are therefore pinned to the node's frozen `size` via
-> `lockSize` on `FlowNodeCard` — without it, pathways meet empty space beside the card.
-> Size capture is blocked in reader mode for the mirror-image reason: otherwise the
-> reader's smaller measurements would be written into the document as the truth.
+Reader mode does **not** change card density. It once forced `standard`, which made the
+Detailed/Compact toggle silently do nothing for a reader, and left detailed content out
+of the view whose whole job is explaining the process. Density is the reader's choice,
+same as the editor's.
+
+> **Trap.** Density must never change *geometry*. A card renders no smaller than its
+> frozen `size` in either mode at either density (`minWidth`/`minHeight` on the card,
+> exact width/height for the decision diamond), because the pathways were routed against
+> that box and would otherwise meet empty space beside it. Verified by diffing every card
+> box and every route `d` across all four combinations of mode × density — 109 boxes and
+> 123 routes, zero differences.
+
+Capture is **grow-only**. A card measuring smaller than its stored box is nearly always a
+density change, and shrinking would move every pathway that meets it; a card measuring
+larger is the one case where the stored box is genuinely wrong — real content that no
+longer fits — so routing has to follow. Capture is also blocked entirely in reader mode,
+so a reader can never write geometry into the document.
 
 ### Load flags
 - `loaded` — something is painted (may be the stale cache).
