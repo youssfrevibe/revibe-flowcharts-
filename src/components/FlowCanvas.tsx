@@ -147,6 +147,22 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     }
   }, [availableLevels, level]);
 
+  // Readers get both rails open. The left rail is how you choose what to look at and the
+  // right panel is where all the card detail went, so a reader landing with both collapsed
+  // sees a bare canvas and no way into it. Forced only on *entering* view — collapsing
+  // them afterwards is the reader's choice and is respected.
+  const openedForView = useRef(false);
+  useEffect(() => {
+    if (mode !== "view") {
+      openedForView.current = false;
+      return;
+    }
+    if (openedForView.current) return;
+    openedForView.current = true;
+    setShowLeft(true);
+    setShowRight(true);
+  }, [mode]);
+
   // Mirror of `level` for event handlers, assigned during render like the other mirrors
   // in this file. Using a ref rather than a dependency keeps a level switch from
   // re-creating all ~30 mutation callbacks.
@@ -2687,7 +2703,14 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   }, [mode, tourIndex]);
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden" style={{ background: "var(--ui-canvas)" }}>
+    // `data-chrome` retints the whole reader shell in one place: every panel, rail and
+    // card reads --ui-* tokens, so the reader palette is a token override rather than a
+    // second set of components. See the reader block in globals.css.
+    <div
+      data-chrome={mode === "view" ? "reader" : "editor"}
+      className="flex flex-col h-screen overflow-hidden"
+      style={{ background: "var(--ui-canvas)" }}
+    >
       <TopBar
         title={projectTitle}
         subtitle={projectSubtitle}

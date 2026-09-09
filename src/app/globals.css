@@ -398,3 +398,80 @@ svg {
   --node-preset-zinc: #1a1a1d;
   --node-preset-dark: #111113;
 }
+
+/* ==================================================================== *
+ * READER CHROME
+ *
+ * Adapted from the Revibe Process Atlas prototype. It is a *token override*
+ * rather than a second set of components: every rail, panel and card already
+ * reads --ui-*, so retinting the shell restyles all of them at once and the
+ * editor is untouched.
+ *
+ * The atlas's real lesson is the neutrals. Its greys are violet-tinted rather
+ * than pure, so a purple accent sits in the same family as the surface instead
+ * of on top of it — which is why its canvas reads calm at a glance and a
+ * slate-grey one does not.
+ * ==================================================================== */
+[data-chrome="reader"] {
+  --ui-canvas: #f7f5fc;
+  --ui-panel: #ffffff;
+  --ui-panel-alt: #fbfafe;
+  --ui-border: #e7e1f4;
+  --ui-border-soft: #f0ecfa;
+  --ui-border-strong: #cfc4ea;
+  --ui-text: #16121f;
+  --ui-text-dim: #3f3852;
+  --ui-text-faint: #6b6580;
+  --ui-input: #fbfafe;
+  --ui-hover: rgba(109, 40, 217, 0.06);
+  --ui-active: rgba(109, 40, 217, 0.11);
+  --ui-dot: rgba(109, 40, 217, 0.07);
+  --ui-grid-line: rgba(109, 40, 217, 0.04);
+  --ui-card-shadow: 0 1px 2px rgba(22, 18, 31, 0.05), 0 8px 24px rgba(22, 18, 31, 0.07);
+  --ui-dock-shadow: 0 24px 60px rgba(22, 18, 31, 0.18);
+}
+
+.dark [data-chrome="reader"] {
+  --ui-canvas: #0e0b16;
+  --ui-panel: #171226;
+  --ui-panel-alt: #1d1730;
+  --ui-border: #2c2442;
+  --ui-border-soft: #241d38;
+  --ui-border-strong: #453a63;
+  --ui-text: #f4f1fb;
+  --ui-text-dim: #cfc7e4;
+  --ui-text-faint: #9a92b4;
+  --ui-input: #1d1730;
+  --ui-hover: rgba(168, 120, 255, 0.08);
+  --ui-active: rgba(168, 120, 255, 0.14);
+  --ui-dot: rgba(168, 120, 255, 0.09);
+  --ui-grid-line: rgba(168, 120, 255, 0.04);
+  --ui-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.4);
+  --ui-dock-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+
+/* Cards. `--c` is the owning actor's colour, set on the wrapper by FlowNodeCard, so
+   hover and selection resolve from the same value as the accent strip. Only transform
+   and box-shadow are animated — both are compositor-only and neither affects layout,
+   so the frozen geometry the pathways were routed against cannot move. */
+[data-chrome="reader"] [data-node-id] {
+  transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1), filter 0.18s;
+}
+[data-chrome="reader"] [data-node-id] > div:first-of-type {
+  box-shadow: var(--ui-card-shadow);
+  transition: box-shadow 0.18s, border-color 0.18s;
+}
+[data-chrome="reader"] [data-node-id]:hover {
+  transform: translateY(-2px);
+  z-index: 20;
+}
+[data-chrome="reader"] [data-node-id]:hover > div:first-of-type {
+  box-shadow: var(--ui-dock-shadow);
+  border-color: var(--c);
+}
+
+/* Reader cards are for reading. The connection ports are editing affordances and the
+   document is locked anyway, so they would only invite a click that does nothing. */
+[data-chrome="reader"] [data-node-id] [data-port] {
+  display: none;
+}

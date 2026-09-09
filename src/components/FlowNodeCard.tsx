@@ -256,6 +256,10 @@ function FlowNodeCard({
     style: {
       left: node.x,
       top: node.y,
+      // One variable drives the card's whole identity — accent strip, hover border and
+      // selection ring all resolve from it, so a card never disagrees with itself about
+      // who owns the step. Borrowed from the Process Atlas prototype.
+      ["--c" as string]: actorStyle?.ring ?? "var(--ui-border-strong)",
       // Geometry is a property of the document, not of how dense the card happens to
       // be right now. A card never renders smaller than its frozen box, in either mode
       // and at either density, or the pathways routed against that box would meet empty

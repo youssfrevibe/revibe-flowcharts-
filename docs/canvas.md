@@ -245,3 +245,30 @@ to the cards never change identity even though the closures inside them are fres
 > 4 drag frames before (exactly 4 × 109), 24 after. Several of those handlers are
 > plain functions rather than `useCallback`, so passing them straight through would
 > defeat memo just as thoroughly — go through `cardFns`.
+
+## Reader chrome
+
+`mode === "view"` puts `data-chrome="reader"` on the shell, and the reader palette is a
+**token override** under that selector rather than a second set of components — every
+rail, panel and card already reads `--ui-*`, so one block retints all of them and the
+editor is untouched.
+
+The palette is adapted from the Revibe Process Atlas prototype. Its actual lesson is the
+neutrals: the greys are violet-tinted rather than pure, so a purple accent sits in the
+same family as the surface instead of on top of it. That is why its canvas reads calm
+and a slate-grey one does not.
+
+Each card carries `--c`, the owning actor's colour, set on the wrapper. The accent strip,
+the hover border and the selection ring all resolve from it, so a card cannot disagree
+with itself about who owns the step.
+
+Both rails are forced open when a reader *enters* view mode — the left rail is how you
+choose what to look at and the right panel is where all the card detail went, so landing
+with both collapsed shows a bare canvas and no way in. Collapsing them afterwards is
+respected.
+
+> **Trap.** Reader hover effects animate `transform` and `box-shadow` only. Both are
+> compositor-only and neither affects layout, so the frozen geometry the pathways were
+> routed against cannot move. Anything that changes padding, border width or font size
+> under `[data-chrome="reader"]` would break that — verified by diffing all 109 boxes
+> and 123 routes across the mode switch.
