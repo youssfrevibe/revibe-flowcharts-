@@ -69,12 +69,14 @@ than sixty.
 yet when a `mousemove` fires. Both are written together in `commit`. Reading `data`
 inside an event handler gives you a stale document; that is not a bug in React.
 
-**2. Node sizes are measured, not computed.** Cards size themselves to their
-content, so a `ResizeObserver` measures the DOM into a `Map<id, Size>`. Layout,
-routing, fit-to-view and export all read that map, and all fall back to a
-`210×84` guess for anything unmeasured. **Anything that unmounts node cards breaks
-all four.** This has caused real bugs — see [canvas.md](canvas.md) and
-[layout.md](layout.md).
+**2. Node geometry is measured once, then frozen.** Cards size themselves to their
+content, so a `ResizeObserver` measures the DOM into a `Map<id, Size>`. The editor
+captures that into each node's `size`, and from then on the stored value wins:
+`effectiveSizes` overlays it before layout, routing, fit-to-view or export ever see
+the map. That is what lets a viewer render simpler cards without re-routing the
+diagram, and what stops two machines with different font metrics from disagreeing.
+A node that has not been captured yet still depends on being mounted and still falls
+back to `210×84` — see [canvas.md](canvas.md) and [layout.md](layout.md).
 
 **3. Cache paints before cloud loads.** `localStorage` gives an instant first paint,
 then the cloud copy arrives and replaces it. So `loaded` means "something is on

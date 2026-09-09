@@ -45,6 +45,12 @@ export interface FlowNode {
   textSize?: TextSize;
   /** Optional node width override or preset. */
   customWidth?: number | NodeWidth;
+  /** Frozen card geometry. Measured once from the DOM by the editor, then authoritative:
+   * routing, layout, fit-to-view and export all prefer it over the live measurement.
+   * Without it the same document routes differently in each chrome that renders it — a
+   * viewer with simpler cards measures smaller boxes and re-collides pathways the editor
+   * had hand-cleared. Absent on legacy nodes until an editor session captures it. */
+  size?: { w: number; h: number };
   /** @deprecated Legacy single stage — migrated by normalize() into `internalStage` /
    * `externalStage`. Kept on the type so old JSON parses cleanly. */
   stage?: string;

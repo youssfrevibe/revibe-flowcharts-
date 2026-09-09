@@ -11,6 +11,28 @@ export function sizeOf(id: string, sizes: Map<string, Size>): Size {
   return sizes.get(id) || DEFAULT_SIZE;
 }
 
+/** Overlay each node's frozen `size` on top of the live DOM measurements.
+ *
+ * Everything geometric — routing, layout, fit-to-view, export — reads one sizes map,
+ * and measuring it from the DOM makes that map depend on whichever chrome happens to
+ * be rendering. Two viewers of the same document then get different pathways, and the
+ * collisions an editor hand-cleared reappear somewhere else. A node carrying `size`
+ * therefore wins over what the DOM currently reports.
+ *
+ * Returns the *original* map when nothing overrides it, so callers can keep this in a
+ * memo without invalidating every downstream route on each render. */
+export function effectiveSizes(nodes: FlowNode[], measured: Map<string, Size>): Map<string, Size> {
+  let merged: Map<string, Size> | null = null;
+  for (const n of nodes) {
+    if (!n.size) continue;
+    const m = measured.get(n.id);
+    if (m && m.w === n.size.w && m.h === n.size.h) continue;
+    if (!merged) merged = new Map(measured);
+    merged.set(n.id, { w: n.size.w, h: n.size.h });
+  }
+  return merged ?? measured;
+}
+
 export function nodeCenter(n: FlowNode, sizes: Map<string, Size>) {
   const s = sizeOf(n.id, sizes);
   return { x: n.x + s.w / 2, y: n.y + s.h / 2 };

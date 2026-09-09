@@ -61,14 +61,24 @@ canvas element's `getBoundingClientRect()`. World ↔ screen is
 `screen = world * zoom + pan`, with `pan` relative to the **canvas element**, not
 the window.
 
-### `sizes` — measured node dimensions
-`Map<nodeId, {w,h}>`, filled by a `ResizeObserver` + `MutationObserver` over
-`[data-node-id]` elements, mirrored synchronously in `sizesRef`.
+### `sizes` — node dimensions, frozen over measured
+Two layers. `measured` is the raw `Map<nodeId, {w,h}>` filled by a `ResizeObserver` +
+`MutationObserver` over `[data-node-id]` elements — nothing but that observer writes it.
+`sizes` is `effectiveSizes(nodes, measured)`: the same map with each node's stored
+`size` laid over it, and *that* is what every consumer reads. `sizesRef` mirrors the
+merged map.
 
-> **Trap.** This map is the input to layout, routing, fit-to-view and export. A node
-> that has never been mounted has no entry and every consumer silently falls back to
-> `210×84`. Most cards here are much larger than that. Anything that unmounts cards
-> — culling, virtualisation, lazy rendering — breaks all four at once.
+An editor session captures `size` for any node missing one, once `docSettled` is true
+and no arrange is running. Capture only ever fills gaps, so peers converge on whichever
+editor got there first instead of overwriting each other with their own measurements.
+
+> **Why.** Measuring per-chrome means one document routes differently for different
+> readers: a viewer rendering simpler cards measures smaller boxes and re-collides the
+> pathways an editor had hand-cleared. Frozen geometry is what makes them agree.
+
+> **Trap.** A node that has *not* been captured yet still has no entry until its card
+> mounts, and every consumer still falls back to `210×84`. Culling, virtualisation and
+> lazy rendering therefore remain dangerous for uncaptured nodes.
 
 ### Load flags
 - `loaded` — something is painted (may be the stale cache).

@@ -13,7 +13,7 @@ import {
   updateDiagramMetadata,
 } from "@/lib/diagram-store";
 import { applyOp, connId, newConnId } from "@/lib/ops";
-import { computeBounds, autoLayout, resolveOverlaps, sizeOf, Size } from "@/lib/graph";
+import { computeBounds, autoLayout, resolveOverlaps, sizeOf, effectiveSizes, Size } from "@/lib/graph";
 import { LayoutPrefs, loadLayoutPrefs, saveLayoutPrefs, DEFAULT_PREFS } from "@/lib/layout-prefs";
 import { buildDiagramSVG } from "@/lib/export-svg";
 import { NODE_COLOR_PRESETS } from "@/lib/node-colors";
@@ -108,7 +108,13 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const [viewMode, setViewMode] = useState<"standard" | "detailed">("detailed");
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "offline">("saved");
 
-  const [sizes, setSizes] = useState<Map<string, Size>>(new Map());
+  // Raw DOM measurements. Only the observer below writes this.
+  const [measured, setMeasured] = useState<Map<string, Size>>(new Map());
+  // ...and this is what every geometric consumer reads: the measurements with each node's
+  // frozen `size` laid over them. Keeping the merged map under the name `sizes` means
+  // routing, layout, fit-to-view, export and the minimap all pick up frozen geometry
+  // without a single call site changing.
+  const sizes = useMemo(() => effectiveSizes(data.nodes, measured), [data.nodes, measured]);
   const [editNode, setEditNode] = useState<FlowNode | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
   const [showHandover, setShowHandover] = useState(false);
@@ -458,7 +464,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     let alive = true;
     const flush = (batch: Map<string, Size>) => {
       if (!alive || batch.size === 0) return;
-      setSizes((prev) => {
+      setMeasured((prev) => {
         let changed = false;
         const next = new Map(prev);
         for (const [id, s] of batch) {
@@ -531,7 +537,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   // Measured sizes for nodes that no longer exist keep the map (and therefore the routing
   // memo key) growing across a long session; drop them once they're gone.
   useEffect(() => {
-    setSizes((prev) => {
+    setMeasured((prev) => {
       if (prev.size <= data.nodes.length) return prev;
       const live = new Set(data.nodes.map((n) => n.id));
       let changed = false;
@@ -545,6 +551,35 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       return changed ? next : prev;
     });
   }, [data.nodes]);
+
+  // Freeze measured geometry into the document for any node that lacks it.
+  //
+  // Until a node carries `size`, every chrome routes from its own DOM measurement, and
+  // those disagree: a viewer renders simpler cards than the editor, and even two editors
+  // measure differently when font metrics differ between machines. That is why a pathway
+  // one person hand-cleared re-collides for the next. Capturing once makes every reader
+  // route from the same numbers.
+  //
+  // Editor-only, and gated on `docSettled` — capturing before the cloud copy lands would
+  // write sizes measured against the cache and then be overwritten by it. `arranging` is
+  // excluded because auto-layout is still moving cards while it runs. Gaps only: a node
+  // that already has `size` is never re-measured here, so peers converge on whichever
+  // editor captured first instead of fighting over their own measurements.
+  useEffect(() => {
+    if (readOnly || !docSettled || arranging) return;
+    const t = setTimeout(() => {
+      const patched = dataRef.current.nodes
+        .filter((n) => !n.size && measured.has(n.id))
+        .map((n) => ({ ...n, size: { ...measured.get(n.id)! } }));
+      if (!patched.length) return;
+      const byId = new Map(patched.map((n) => [n.id, n]));
+      commit(
+        (prev) => ({ ...prev, nodes: prev.nodes.map((n) => byId.get(n.id) ?? n) }),
+        patched.map((n) => ({ t: "node.upsert" as const, origin: uid, node: n }))
+      );
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [readOnly, docSettled, arranging, measured, commit, uid]);
 
   // Synchronous view of the measured sizes, for code that has to read them after an
   // await rather than at render time.

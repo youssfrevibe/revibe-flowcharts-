@@ -41,9 +41,11 @@ because they are a second thing to keep correct and they go stale first.
 
 ## Three things that will bite you
 
-1. **`sizes` is measured from the DOM**, not computed. Layout, routing, fit-to-view
-   and export all read it and all silently fall back to `210×84`. Anything that
-   unmounts node cards breaks all four.
+1. **Node geometry is frozen into the document, not re-measured.** A node's `size` is
+   captured once by an editor session and then wins over the DOM; `sizes` is that
+   overlay (`effectiveSizes` in `graph.ts`), not the raw measurement. A node that has
+   *not* been captured still falls back to the live measurement and then `210×84`, so
+   unmounting an uncaptured card still breaks layout, routing, fit-to-view and export.
 2. **`loaded` means "the cache painted"**, not "the document is here". Work that
    rewrites the document on open must wait for `docSettled`.
 3. **Selection lives in a Zustand store *and* in refs.** Always write it through
