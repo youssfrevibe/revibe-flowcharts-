@@ -29,6 +29,7 @@ import LayersPanel from "./LayersPanel";
 import LevelSidebar from "./LevelSidebar";
 import NodeDetailPanel from "./NodeDetailPanel";
 import GuidedTour from "./GuidedTour";
+import { applyLevelPlan, describeLevelPlan, type LevelPlan } from "@/lib/ai-levels";
 import InspectorPanel, { AlignKind } from "./InspectorPanel";
 import ContextMenu, { ContextMenuItem } from "./ContextMenu";
 import Connections, { WaypointDragStart, SegmentDragStart, EndpointDragStart } from "./Connections";
@@ -2501,6 +2502,30 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
    * removed — a pure field edit leaves hand-placed positions alone.
    * Returns a one-line summary for the AI dialog.
    */
+  /**
+   * Applies an AI-authored set of coarser levels.
+   *
+   * A tier replacement, not a merge — re-running must not leave last week's summary
+   * beside this week's (see applyLevelPlan). Snapshotted first because it rewrites two
+   * whole levels at once, and lands the reader on "the shape" so the result is visible
+   * rather than sitting on a level nobody switched to.
+   */
+  const applyLevelsPlan = useCallback(
+    (plan: LevelPlan) => {
+      if (readOnly) return "This diagram is read-only.";
+      snapshotNow("Before AI levels");
+      const res = applyLevelPlan(dataRef.current, plan, uid);
+      commit(() => res.data, res.ops);
+      setLevel(1);
+      // The new summary nodes were parked in a grid and have never been measured, so
+      // they must go through measure-then-layout rather than a bare autoLayout.
+      const ids = res.data.nodes.filter((n) => n.level === 1).map((n) => n.id);
+      setTimeout(() => void measureThenLayout(ids), 150);
+      return describeLevelPlan(res.counts);
+    },
+    [readOnly, commit, uid, snapshotNow, measureThenLayout]
+  );
+
   const applyAIEditPlan = useCallback(
     (operations: AIEditOp[], summary: string) => {
       snapshotNow(summary ? `Before AI edit: ${summary.slice(0, 60)}` : "Before AI edit");
@@ -2954,6 +2979,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
           getCurrent={() => dataRef.current}
           currentTitle={projectTitle}
           onApplyEdits={readOnly ? undefined : applyAIEditPlan}
+          onApplyLevels={readOnly ? undefined : applyLevelsPlan}
         />
       )}
 

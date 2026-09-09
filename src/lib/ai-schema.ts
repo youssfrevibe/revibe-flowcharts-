@@ -12,6 +12,7 @@
  */
 
 import { FlowConnection, FlowData, FlowNode } from "./types";
+import type { LevelPlan, LevelPlanConn, LevelPlanNode, LevelPlanTier } from "./ai-levels";
 import {
   ACTORS,
   CONN_TYPES,
@@ -376,4 +377,97 @@ export function normalizeGenerated(parsed: { nodes?: unknown[]; connections?: un
   });
 
   return { nodes, connections };
+}
+
+/* ------------------------------------------------------------------ *
+ * Levels — summarising an existing map into coarser views
+ * ------------------------------------------------------------------ */
+
+export const LEVELS_SYSTEM_PROMPT = `You are a process-mapping assistant. You are given a FULLY DETAILED process map as LEVEL 3 — every loop, every retry, every one-market exception. Produce two coarser views of the SAME process so a reader can start simple and drill down.
+
+LEVEL 1 — "The shape". 5 to 9 steps. What a new joiner needs on day one. Plain language. No system names, no stage codes, no exception paths, no retries. If a reader can understand the process without a step, it does not belong here.
+
+LEVEL 2 — "Branches". 12 to 20 steps. Every path that actually happens and where each one ends. Include the real decision points and the main failure outcomes, but not retries, reminders, or single-market exceptions.
+
+HARD RULES
+- You are SUMMARISING, not designing. Never invent work that is not in level 3.
+- Every node you create must list, in "children", the level-3 node ids it stands for.
+- Use only level-3 ids that were given to you. Do not invent ids in "children".
+- EVERY level-3 id must appear in exactly one level-1 node's children. Leaving one out means the summary hides part of the process.
+- Give your new nodes fresh ids prefixed "l1_" / "l2_" (e.g. "l1_claim_raised").
+- Connections may only join nodes on the SAME level you created them on. Never connect a level-1 node to a level-3 node.
+- Reuse the actor vocabulary from level 3 so "who is involved" stays consistent.
+- A step whose label reads like a data assignment ("stage = Refunded") is a level-3 implementation detail. Express it in plain language at level 1.
+
+${FIELD_REFERENCE}
+
+Return STRICT JSON only:
+{
+  "summary": "one line describing what you produced",
+  "levels": [
+    { "level": 1, "nodes": [{ "id": "l1_x", "type": "step", "label": "...", "detail": "...", "actor": "revibe", "children": ["n1","n2"] }], "connections": [{ "from": "l1_x", "to": "l1_y", "label": "", "type": "" }] },
+    { "level": 2, "nodes": [...], "connections": [...] }
+  ]
+}`;
+
+const MAX_TIER_NODES: Record<1 | 2, number> = { 1: 14, 2: 32 };
+
+/**
+ * Validates an AI level plan down to something safe to apply.
+ *
+ * Two failure modes matter more than the rest. A child id the model invented would make
+ * a summary claim to collapse a step that does not exist, so children are intersected
+ * with the ids we actually sent. And a connection crossing levels would route a pathway
+ * to a node that is never on screen at the same time, so connections are dropped unless
+ * both ends were created on that same tier.
+ */
+export function normalizeLevelPlan(parsed: unknown, knownIds: Set<string>): LevelPlan {
+  const root = (parsed ?? {}) as { summary?: unknown; levels?: unknown; tiers?: unknown };
+  const raw = Array.isArray(root.levels) ? root.levels : Array.isArray(root.tiers) ? root.tiers : [];
+
+  const tiers: LevelPlanTier[] = [];
+  const seenLevels = new Set<number>();
+
+  for (const t of raw as unknown[]) {
+    const tier = (t ?? {}) as { level?: unknown; nodes?: unknown; connections?: unknown };
+    const level = tier.level === 1 || tier.level === "1" ? 1 : tier.level === 2 || tier.level === "2" ? 2 : null;
+    if (level === null || seenLevels.has(level)) continue;
+    seenLevels.add(level);
+
+    const nodes: LevelPlanNode[] = [];
+    const usedIds = new Set<string>();
+    for (const n of (Array.isArray(tier.nodes) ? tier.nodes : []).slice(0, MAX_TIER_NODES[level])) {
+      const o = (n ?? {}) as Record<string, unknown>;
+      const id = str(o.id, 80);
+      const label = str(o.label, 160);
+      if (!id || !label || usedIds.has(id)) continue;
+      usedIds.add(id);
+      nodes.push({
+        id,
+        label,
+        type: inSet(NODE_TYPES, o.type) ?? "step",
+        detail: str(o.detail, 600),
+        actor: inSet(ACTORS, o.actor),
+        children: (strArray(o.children, 200, 80) ?? []).filter((c) => knownIds.has(c)),
+      });
+    }
+
+    const connections: LevelPlanConn[] = [];
+    const seenPairs = new Set<string>();
+    for (const c of (Array.isArray(tier.connections) ? tier.connections : []).slice(0, 200)) {
+      const o = (c ?? {}) as Record<string, unknown>;
+      const from = str(o.from, 80);
+      const to = str(o.to, 80);
+      if (!from || !to || from === to) continue;
+      if (!usedIds.has(from) || !usedIds.has(to)) continue;
+      const key = `${from}__${to}`;
+      if (seenPairs.has(key)) continue;
+      seenPairs.add(key);
+      connections.push({ from, to, label: str(o.label, 120), type: inSet(CONN_TYPES, o.type) });
+    }
+
+    if (nodes.length) tiers.push({ level, nodes, connections });
+  }
+
+  return { summary: str(root.summary, 400) ?? "", tiers };
 }

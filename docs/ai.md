@@ -80,3 +80,36 @@ Four places, all of them:
 
 Miss the prompt and the model never emits it; miss the validator and it gets
 stripped.
+
+## Levels — summarising an existing map
+
+A third operation beside generate and edit, at `POST /api/ai/levels`. There is no
+instruction: the detailed map *is* the instruction. The model is handed level 3 and
+asked for levels 1 ("the shape", 5–9 steps) and 2 ("branches", 12–20), each node
+naming the level-3 ids it collapses in `children`.
+
+`normalizeLevelPlan` → `applyLevelPlan` → `commit`, same shape as the edit path.
+
+> **Only level 3 is ever sent.** Summaries are derived from the real process, never
+> from an earlier summary — otherwise re-running slowly summarises a summary and the
+> result drifts away from what the process actually does.
+
+> **It is a tier replacement, not a merge.** Re-running deletes levels 1–2 and writes
+> them fresh, or last week's summary steps would sit beside this week's with no way to
+> tell them apart. Level 3 — the part people hand-edited — is never touched, and a
+> snapshot is taken first.
+
+Two validations matter more than the rest, because both fail silently otherwise:
+
+- **Children are intersected with the ids actually sent.** An invented child id would
+  leave a summary claiming to collapse a step that does not exist.
+- **Connections are dropped unless both ends were created on the same tier.** A
+  cross-level pathway would route to a node that is never on screen at the same time.
+
+`applyLevelPlan` also reports `uncovered` — level-3 steps no level-1 summary claims.
+That is surfaced in the result line rather than swallowed: a summary that omits part
+of the process is a content problem the author needs to see, not a rendering bug.
+
+New summary nodes are parked in a grid and have never been measured, so the canvas
+routes them through `measureThenLayout` rather than a bare `autoLayout` — see the
+measurement trap in [canvas.md](canvas.md).

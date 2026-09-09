@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { FlowConnection, FlowData, FlowNode } from "@/lib/types";
 import { AIEditOp } from "@/lib/ai-schema";
+import type { LevelPlan } from "@/lib/ai-levels";
 import { aiCredentials, getAISettings } from "@/lib/ai-settings";
 import AISettingsModal from "./AISettingsModal";
 
@@ -19,6 +20,11 @@ interface Props {
    * Absent in read-only mode, which hides the Edit tab.
    */
   onApplyEdits?: (operations: AIEditOp[], summary: string) => string;
+  /**
+   * Applies an AI-authored set of coarser levels and returns a one-line summary.
+   * Absent in read-only mode, which hides the Levels tab.
+   */
+  onApplyLevels?: (plan: LevelPlan) => string;
 }
 
 const GENERATE_PRESETS = [
@@ -35,10 +41,13 @@ const EDIT_PRESETS = [
   { label: "🔍 Audit Process Gaps", text: "Review this flowchart for missing exception paths or unhandled failure states, and add the necessary decision branches." },
 ];
 
-type Mode = "generate" | "edit";
+type Mode = "generate" | "edit" | "levels";
 
-export default function AIGenerateModal({ onClose, onGenerated, getCurrent, currentTitle, onApplyEdits }: Props) {
+export default function AIGenerateModal({ onClose, onGenerated, getCurrent, currentTitle, onApplyEdits, onApplyLevels }: Props) {
   const canEdit = Boolean(onApplyEdits);
+  // Summarising needs something to summarise; below a handful of steps the coarser
+  // views would only restate the detailed one.
+  const canLevels = Boolean(onApplyLevels) && Boolean(onApplyEdits);
   const nodeCount = useMemo(() => getCurrent().nodes.length, [getCurrent]);
 
   const [mode, setMode] = useState<Mode>(canEdit && nodeCount > 0 ? "edit" : "generate");
@@ -123,7 +132,41 @@ export default function AIGenerateModal({ onClose, onGenerated, getCurrent, curr
     }
   };
 
-  const submit = mode === "generate" ? generate : runEdit;
+  const runLevels = async () => {
+    if (!onApplyLevels) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const flow = getCurrent();
+      const res = await fetch("/api/ai/levels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          flow: { nodes: flow.nodes, connections: flow.connections },
+          title: currentTitle,
+          ...aiCredentials(),
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(json.error || "The AI could not summarise this diagram.");
+        return;
+      }
+      const plan = json as LevelPlan;
+      if (!plan.tiers?.length) {
+        setResult("The AI returned no usable summary levels.");
+        return;
+      }
+      setResult(onApplyLevels(plan));
+    } catch {
+      setError("Network error connecting to Gemini. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submit = mode === "generate" ? generate : mode === "levels" ? runLevels : runEdit;
   const text = mode === "generate" ? prompt : instruction;
 
   return (
@@ -175,6 +218,7 @@ export default function AIGenerateModal({ onClose, onGenerated, getCurrent, curr
                 [
                   ["edit", "Edit Active Flowchart"],
                   ["generate", "Draft New Flowchart"],
+                  ...(canLevels ? ([["levels", "Summarise into Levels"]] as const) : []),
                 ] as const
               ).map(([m, label]) => (
                 <button
@@ -194,6 +238,26 @@ export default function AIGenerateModal({ onClose, onGenerated, getCurrent, curr
 
           {/* Body */}
           <div className="p-5 space-y-4">
+            {mode === "levels" ? (
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700/80 bg-zinc-50/60 dark:bg-zinc-800/60 px-4 py-3.5 space-y-2.5">
+                <p className="text-[12.5px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+                  Reads the full process — all <strong>{nodeCount}</strong> steps — and writes the
+                  two coarser views a reader starts from.
+                </p>
+                <ul className="text-[12px] space-y-1 text-zinc-500 dark:text-zinc-400">
+                  <li>
+                    <strong>1 · The shape</strong> — 5–9 steps, what a new joiner needs on day one
+                  </li>
+                  <li>
+                    <strong>2 · Branches</strong> — 12–20 steps, every path that actually happens
+                  </li>
+                </ul>
+                <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                  Replaces any existing level 1 and 2. Your detailed map is never touched.
+                </p>
+              </div>
+            ) : (
+              <>
             <textarea
               autoFocus
               rows={4}
@@ -228,6 +292,8 @@ export default function AIGenerateModal({ onClose, onGenerated, getCurrent, curr
                 ))}
               </div>
             </div>
+              </>
+            )}
 
             {!apiKey && (
               <div className="text-[11.5px] text-zinc-600 dark:text-zinc-300 bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2 flex items-center justify-between">
@@ -255,7 +321,11 @@ export default function AIGenerateModal({ onClose, onGenerated, getCurrent, curr
 
             <div className="flex items-center justify-between gap-3 pt-1">
               <span className="text-[11px] text-zinc-400">
-                {mode === "generate" ? "Replaces canvas (auto-version snapshot saved)" : "Surgical edits (undoable with ⌘Z)"}
+                {mode === "generate"
+                  ? "Replaces canvas (auto-version snapshot saved)"
+                  : mode === "levels"
+                    ? "Rewrites levels 1–2 · detailed map untouched"
+                    : "Surgical edits (undoable with ⌘Z)"}
               </span>
               <div className="flex items-center gap-2 shrink-0">
                 <button
@@ -266,16 +336,24 @@ export default function AIGenerateModal({ onClose, onGenerated, getCurrent, curr
                 </button>
                 <button
                   onClick={submit}
-                  disabled={loading || !text.trim()}
+                  disabled={loading || (mode !== "levels" && !text.trim())}
                   className="px-4 py-2 text-xs font-semibold bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl shadow-md shadow-sky-500/20 transition-all flex items-center gap-1.5 active:scale-95"
                 >
                   {loading ? (
                     <>
                       <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                      <span>{mode === "generate" ? "Generating Flowchart…" : "Applying Changes…"}</span>
+                      <span>
+                        {mode === "generate"
+                          ? "Generating Flowchart…"
+                          : mode === "levels"
+                            ? "Summarising…"
+                            : "Applying Changes…"}
+                      </span>
                     </>
                   ) : mode === "generate" ? (
                     "Generate Flowchart"
+                  ) : mode === "levels" ? (
+                    "Summarise into Levels"
                   ) : (
                     "Apply Changes"
                   )}
