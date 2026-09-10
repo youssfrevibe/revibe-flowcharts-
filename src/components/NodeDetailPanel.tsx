@@ -2,8 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { FactLink, FlowData, FlowNode, Mover } from "@/lib/types";
-import { ACTOR_STYLES } from "@/lib/node-colors";
+import { ACTOR_STYLES, actorVars } from "@/lib/node-colors";
 import { childrenOf, levelOf } from "@/lib/levels";
+import ActorIcon from "./ActorIcon";
 
 /**
  * The reader's view of one step.
@@ -317,10 +318,10 @@ export default function NodeDetailPanel({
         <div className="flex items-start justify-between gap-3">
           {actor && (
             <span
-              className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.06em]"
-              style={{ background: actor.pill, color: actor.pillText }}
+              className="actor-chip inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.06em]"
+              style={actorVars(actor)}
             >
-              <span aria-hidden>{actor.icon}</span>
+              <ActorIcon actor={actor.id} size={13} />
               {actor.label}
             </span>
           )}

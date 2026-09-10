@@ -1,8 +1,9 @@
 "use client";
 
 import { FlowNode, NodeType, Port } from "@/lib/types";
-import { getNodeStyle, ACTOR_STYLES } from "@/lib/node-colors";
+import { getNodeStyle, ACTOR_STYLES, actorVars } from "@/lib/node-colors";
 import React, { useRef, useCallback, useState, useEffect } from "react";
+import ActorIcon from "./ActorIcon";
 
 export const TYPE_LABELS: Record<NodeType, string> = {
   start: "Start",
@@ -326,18 +327,21 @@ function FlowNodeCard({
         >
           {actorStyle && (
             <div
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[8.5px] font-bold uppercase tracking-wider mb-0.5 shadow-xs"
-              style={{ backgroundColor: actorStyle.pillDark, color: actorStyle.accent }}
+              className="actor-ink mb-0.5 inline-flex items-center gap-1 text-[9.5px] font-bold uppercase tracking-[0.07em]"
+              style={actorVars(actorStyle)}
               title={actorTitle}
             >
-              <span>{actorStyle.icon}</span>
+              <ActorIcon actor={actorStyle.id} size={11} />
               <span>{actorStyle.shortLabel}</span>
             </div>
           )}
 
-          <div className={`${sizeCls.header} font-bold uppercase tracking-wider text-amber-200/90 flex items-center gap-1`}>
+          <div
+            className={`${sizeCls.header} flex items-center gap-1 font-bold uppercase tracking-wider`}
+            style={{ color: "var(--ui-text-faint)" }}
+          >
             <span>Decision</span>
-            {node.sla && <span className="text-emerald-200 font-mono">· {node.sla}</span>}
+            {node.sla && <span className="font-mono">· {node.sla}</span>}
           </div>
 
           {hasStageBlock && <div className="mt-1">{renderStageLines()}</div>}
@@ -478,7 +482,7 @@ function FlowNodeCard({
         {/* Left Actor Responsibility Accent Strip */}
         {actorStyle && (
           <div
-            className="absolute left-0 top-0 bottom-0 w-1 z-20 shadow-xs"
+            className="absolute left-0 top-0 bottom-0 z-20 w-[5px] rounded-l-xl"
             style={{ backgroundColor: actorStyle.ring }}
             title={actorTitle}
           />
@@ -487,31 +491,48 @@ function FlowNodeCard({
         {/* Sub-process nested vertical rail lines */}
         {isSub && (
           <>
-            <div className="absolute top-0 bottom-0 left-2 w-px bg-white/30 pointer-events-none" />
-            <div className="absolute top-0 bottom-0 right-2 w-px bg-white/30 pointer-events-none" />
+            <div
+              className="pointer-events-none absolute bottom-0 left-2 top-0 w-px"
+              style={{ background: "var(--ui-border)" }}
+            />
+            <div
+              className="pointer-events-none absolute bottom-0 right-2 top-0 w-px"
+              style={{ background: "var(--ui-border)" }}
+            />
           </>
         )}
 
         {/* Card Header */}
-        <div className={`px-3.5 pt-2.5 pb-1.5 ${sizeCls.header} font-bold uppercase tracking-wider border-b border-white/15 opacity-95 flex items-center justify-between ${isSub ? "mx-2" : ""}`}>
+        <div
+          className={`flex items-center justify-between gap-2 border-b px-3.5 pb-1.5 pt-2.5 ${sizeCls.header} font-bold uppercase tracking-wider ${isSub ? "mx-2" : ""}`}
+          style={{ borderColor: "var(--ui-border-soft)", color: "var(--ui-text-faint)" }}
+        >
           <span className="flex items-center gap-1.5">
             <span>{TYPE_ICONS[node.type]}</span>
             <span>{TYPE_LABELS[node.type]}</span>
           </span>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             {actorStyle && (
+              // Ink, not a plate. The role used to be pale accent text on a dark wash at
+              // 8.5px, which failed contrast in light mode outright (the wash is built
+              // for a dark card) and was barely legible in either. Coloured text on the
+              // card's own surface is both higher contrast and quieter.
               <span
-                className="text-[8.5px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs"
-                style={{ backgroundColor: actorStyle.pillDark, color: actorStyle.accent }}
+                className="actor-ink flex items-center gap-1 text-[9.5px] font-bold uppercase tracking-[0.07em]"
+                style={actorVars(actorStyle)}
+                title={actorTitle}
               >
-                <span>{actorStyle.icon}</span>
+                <ActorIcon actor={actorStyle.id} size={11} />
                 <span>{actorStyle.shortLabel}</span>
               </span>
             )}
             {node.sla && (
-              <span className="bg-black/35 px-1.5 py-0.5 rounded text-[8.5px] text-emerald-200 tracking-normal font-mono border border-white/10">
-                SLA: {node.sla}
+              <span
+                className="rounded px-1.5 py-0.5 font-mono text-[9px] tracking-normal"
+                style={{ background: "var(--ui-hover)", color: "var(--ui-text-dim)" }}
+              >
+                SLA {node.sla}
               </span>
             )}
           </div>
@@ -523,43 +544,73 @@ function FlowNodeCard({
         )}
 
         {/* Title */}
-        <div className={`px-3.5 pt-2 pb-1 ${sizeCls.title} font-bold leading-snug ${alignCls} ${isSub ? "mx-2" : ""}`}>
+        <div
+          className={`px-3.5 pb-1 pt-2 ${sizeCls.title} font-bold leading-snug ${alignCls} ${isSub ? "mx-2" : ""}`}
+          style={{ color: "var(--ui-text)" }}
+        >
           {node.label}
         </div>
 
         {/* Detail */}
         {node.detail && (
-          <div className={`px-3.5 pb-2.5 ${sizeCls.detail} leading-relaxed opacity-90 ${alignCls} ${isSub ? "mx-2" : ""}`}>
+          <div
+            className={`px-3.5 pb-2.5 ${sizeCls.detail} leading-relaxed ${alignCls} ${isSub ? "mx-2" : ""}`}
+            style={{ color: "var(--ui-text-dim)" }}
+          >
             {node.detail}
           </div>
         )}
 
         {/* Detailed Procedure & Tools */}
         {isDetailed && (node.tools?.length || node.agentSteps?.length) ? (
-          <div className="px-3.5 pb-3 pt-2 border-t border-white/15 space-y-2 bg-black/25">
+          // `bg-black/25` over a card that is white in light mode is the grey slab in
+          // the middle of the card. Everything here now reads from the theme instead.
+          <div
+            className="space-y-2 border-t px-3.5 pb-3 pt-2"
+            style={{ borderColor: "var(--ui-border-soft)", background: "var(--ui-hover)" }}
+          >
             {node.tools && node.tools.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {node.tools.map((t, idx) => (
                   <span
                     key={idx}
-                    className="bg-white/15 border border-white/25 text-[9.5px] px-1.5 py-0.5 rounded-md font-medium tracking-tight"
+                    className="rounded-md border px-1.5 py-0.5 text-[9.5px] font-medium tracking-tight"
+                    style={{
+                      borderColor: "var(--ui-border)",
+                      background: "var(--ui-panel)",
+                      color: "var(--ui-text-dim)",
+                    }}
                   >
-                    🛠 {t}
+                    {t}
                   </span>
                 ))}
               </div>
             )}
             {node.agentSteps && node.agentSteps.length > 0 && (
               <div className="space-y-1 pt-1">
-                <div className="text-[9px] font-bold uppercase opacity-90 tracking-wider">Standard Procedure</div>
-                <ul className="space-y-1">
+                <div
+                  className="text-[9px] font-bold uppercase tracking-wider"
+                  style={{ color: "var(--ui-text-faint)" }}
+                >
+                  Standard Procedure
+                </div>
+                <ol className="space-y-1">
                   {node.agentSteps.map((step, idx) => (
-                    <li key={idx} className="text-[10.5px] leading-snug flex items-start gap-1.5 opacity-95">
-                      <span className="text-emerald-300 font-bold shrink-0">{idx + 1}.</span>
+                    <li
+                      key={idx}
+                      className="flex items-start gap-1.5 text-[10.5px] leading-snug"
+                      style={{ color: "var(--ui-text-dim)" }}
+                    >
+                      <span
+                        className="shrink-0 font-bold tabular-nums"
+                        style={{ color: "var(--ui-text-faint)" }}
+                      >
+                        {idx + 1}.
+                      </span>
                       <span>{step}</span>
                     </li>
                   ))}
-                </ul>
+                </ol>
               </div>
             )}
           </div>

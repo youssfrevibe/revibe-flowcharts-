@@ -77,11 +77,14 @@
 }
 
 .dark {
-  /* On near-black the soft tints become washes rather than pastels, or nothing reads. */
+  /* On near-black the soft tints become washes rather than pastels, or nothing reads.
+     The two lavenders are used as surfaces (row stripes, table bands) rather than as
+     brand marks, so in dark mode they are plain white washes — a purple stripe behind
+     every other row was most of what made the dark theme look violet. */
   --rv-pink-soft: rgba(255, 46, 99, 0.16);
-  --rv-purple-soft: rgba(124, 58, 237, 0.18);
-  --rv-lavender: rgba(124, 58, 237, 0.06);
-  --rv-lavender-deep: rgba(124, 58, 237, 0.1);
+  --rv-purple-soft: rgba(167, 139, 250, 0.16);
+  --rv-lavender: rgba(255, 255, 255, 0.035);
+  --rv-lavender-deep: rgba(255, 255, 255, 0.06);
   --rv-gradient-soft: linear-gradient(135deg, rgba(255, 46, 99, 0.14) 0%, rgba(124, 58, 237, 0.16) 100%);
 }
 
@@ -341,13 +344,20 @@ svg {
 }
 
 .dark {
-  --node-fill-start: #052e26;
-  --node-fill-ok: #052e26;
-  --node-fill-step: #18191c;
-  --node-fill-decision: #221046;
-  --node-fill-sub: #3b0a1c;
-  --node-fill-fail: #3a1013;
-  --node-fill-note: #2e2410;
+  /* Card surfaces are neutral in dark mode. They used to be deep tints of the type's own
+     hue — a decision was #221046, a violet card the size of the whole shape — so with a
+     hundred of them on screen the canvas read as a wash of colour and the one thing that
+     genuinely encodes meaning, the actor's accent, had nothing to stand out against.
+     The type is already carried by the silhouette (a diamond is a diamond) and by its
+     label, so the fill does not need to repeat it. The note keeps a warm cast, because
+     looking like a sticky note IS what a note is. */
+  --node-fill-start: #141518;
+  --node-fill-ok: #141518;
+  --node-fill-step: #161719;
+  --node-fill-decision: #1a1b1f;
+  --node-fill-sub: #141518;
+  --node-fill-fail: #171618;
+  --node-fill-note: #221d12;
 
   --flow-edge: #9aa3b2;
   --flow-label: #cbd5e1;
@@ -383,20 +393,23 @@ svg {
 }
 
 .dark {
-  --node-preset-emerald: #052e26;
-  --node-preset-teal: #04312e;
-  --node-preset-cyan: #083344;
-  --node-preset-blue: #0c1e4a;
-  --node-preset-indigo: #231152;
-  --node-preset-violet: #2b1065;
-  --node-preset-purple: #3b0764;
-  --node-preset-rose: #4c0519;
-  --node-preset-amber: #3a2408;
-  --node-preset-orange: #411a05;
-  --node-preset-red: #3f0d0d;
-  --node-preset-slate: #131a26;
-  --node-preset-zinc: #1a1a1d;
-  --node-preset-dark: #111113;
+  /* Picking a colour for one card is a deliberate act, so these stay coloured — but at
+     roughly a third of their old saturation, so a handful of them read as marks on a
+     dark surface rather than as blocks of paint competing with the actor accents. */
+  --node-preset-emerald: #0c1a17;
+  --node-preset-teal: #0b1a19;
+  --node-preset-cyan: #0c1a20;
+  --node-preset-blue: #0e1626;
+  --node-preset-indigo: #14122a;
+  --node-preset-violet: #171232;
+  --node-preset-purple: #1c1230;
+  --node-preset-rose: #241016;
+  --node-preset-amber: #211a0e;
+  --node-preset-orange: #22150c;
+  --node-preset-red: #221011;
+  --node-preset-slate: #14171d;
+  --node-preset-zinc: #17171a;
+  --node-preset-dark: #101012;
 }
 
 /* ==================================================================== *
@@ -431,23 +444,46 @@ svg {
   --ui-dock-shadow: 0 24px 60px rgba(22, 18, 31, 0.18);
 }
 
+/* Neutral, not purple. The reader used to tint every dark surface violet — canvas,
+   panels, borders, the dot grid — so the whole chrome read as one colour and the actor
+   hues, which are the only thing on screen carrying meaning, had to fight it. Dark mode
+   is now black and grey, and colour is reserved for accents. */
 .dark [data-chrome="reader"] {
-  --ui-canvas: #0e0b16;
-  --ui-panel: #171226;
-  --ui-panel-alt: #1d1730;
-  --ui-border: #2c2442;
-  --ui-border-soft: #241d38;
-  --ui-border-strong: #453a63;
-  --ui-text: #f4f1fb;
-  --ui-text-dim: #cfc7e4;
-  --ui-text-faint: #9a92b4;
-  --ui-input: #1d1730;
-  --ui-hover: rgba(168, 120, 255, 0.08);
-  --ui-active: rgba(168, 120, 255, 0.14);
-  --ui-dot: rgba(168, 120, 255, 0.09);
-  --ui-grid-line: rgba(168, 120, 255, 0.04);
+  --ui-canvas: #0a0a0b;
+  --ui-panel: #121213;
+  --ui-panel-alt: #191919;
+  --ui-border: #26262a;
+  --ui-border-soft: #1d1d20;
+  --ui-border-strong: #3d3d43;
+  --ui-text: #fafafa;
+  --ui-text-dim: #c9c9ce;
+  --ui-text-faint: #8e8e97;
+  --ui-input: #191919;
+  --ui-hover: rgba(255, 255, 255, 0.06);
+  --ui-active: rgba(255, 255, 255, 0.11);
+  --ui-dot: rgba(255, 255, 255, 0.07);
+  --ui-grid-line: rgba(255, 255, 255, 0.035);
   --ui-card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.4);
   --ui-dock-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+
+/* An actor's colour chip — icon, or icon plus label. Reads the custom properties that
+   `actorVars()` spreads onto the element, so one class works in both themes and the icon,
+   its label and its background always come from the same actor entry. */
+.actor-chip {
+  background: var(--a-pill);
+  color: var(--a-text);
+}
+.dark .actor-chip {
+  background: var(--a-pill-dark);
+  color: var(--a-text-dark);
+}
+/* Just the ink, no plate — for a role label sitting directly on the card. */
+.actor-ink {
+  color: var(--a-text);
+}
+.dark .actor-ink {
+  color: var(--a-text-dark);
 }
 
 /* Cards. `--c` is the owning actor's colour, set on the wrapper by FlowNodeCard, so

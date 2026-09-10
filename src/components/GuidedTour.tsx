@@ -2,7 +2,8 @@
 
 import { useEffect } from "react";
 import { FlowNode } from "@/lib/types";
-import { ACTOR_STYLES } from "@/lib/node-colors";
+import { ACTOR_STYLES, actorVars } from "@/lib/node-colors";
+import ActorIcon from "./ActorIcon";
 
 /**
  * Walks a reader through the process one step at a time.
@@ -66,8 +67,8 @@ export default function GuidedTour({ steps, index, onIndex, onExit }: Props) {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
               {actor && (
-                <span className="shrink-0 text-[11px]" aria-hidden>
-                  {actor.icon}
+                <span className="actor-ink shrink-0" style={actorVars(actor)}>
+                  <ActorIcon actor={actor.id} size={13} />
                 </span>
               )}
               <span className="truncate text-[13px] font-semibold">{step.label}</span>

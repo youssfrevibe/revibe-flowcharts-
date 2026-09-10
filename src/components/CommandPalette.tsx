@@ -3,9 +3,10 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { Actor, FlowNode } from "@/lib/types";
 import { LEVEL_LABELS } from "@/lib/levels";
+import ActorIcon from "./ActorIcon";
 import { DiagramMetadata } from "@/lib/types";
 import { getCachedDiagrams } from "@/lib/diagram-store";
-import { ACTOR_ORDER, ACTOR_STYLES } from "@/lib/node-colors";
+import { ACTOR_ORDER, ACTOR_STYLES, actorVars } from "@/lib/node-colors";
 
 export interface CommandAction {
   id: string;
@@ -14,6 +15,8 @@ export interface CommandAction {
   shortcut?: string;
   /** Small qualifier after the title — which detail level a step lives on. */
   subtitle?: string;
+  /** Renders this actor's SVG, in its colour, instead of the `icon` string. */
+  actorIcon?: Actor;
   icon?: string;
   keywords?: string[];
   perform: () => void;
@@ -102,7 +105,9 @@ export default function CommandPalette({
             id: `actor-${a}`,
             title: `Set Actor to: ${ACTOR_STYLES[a].label}`,
             category: "Actors" as const,
-            icon: ACTOR_STYLES[a].icon,
+            // `icon` is a string slot shared with every other command; an actor now
+            // carries its SVG separately so it can be tinted with the actor's colour.
+            actorIcon: a,
             keywords: [a, "role", "responsibility", "ownership"],
             perform: () => onBatchSetActor(a),
           }))
@@ -264,7 +269,15 @@ export default function CommandPalette({
                   }`}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="w-5 text-center text-sm shrink-0">{item.icon}</span>
+                    <span className="grid w-5 shrink-0 place-items-center text-sm">
+                      {item.actorIcon ? (
+                        <span className="actor-ink" style={actorVars(ACTOR_STYLES[item.actorIcon])}>
+                          <ActorIcon actor={item.actorIcon} size={14} />
+                        </span>
+                      ) : (
+                        item.icon
+                      )}
+                    </span>
                     <span className="text-[13px] truncate">{item.title}</span>
                     {item.subtitle && (
                       <span className="text-[10.5px] text-zinc-400 shrink-0">{item.subtitle}</span>

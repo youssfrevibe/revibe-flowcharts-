@@ -2,8 +2,9 @@
 
 import { useMemo } from "react";
 import { DetailLevel, FlowData } from "@/lib/types";
-import { ACTOR_ORDER, ACTOR_STYLES } from "@/lib/node-colors";
+import { ACTOR_ORDER, ACTOR_STYLES, actorVars } from "@/lib/node-colors";
 import { LEVELS, LEVEL_LABELS, levelCounts } from "@/lib/levels";
+import ActorIcon from "./ActorIcon";
 
 /**
  * The reader's way in: how much detail to show, who is involved, and where the process
@@ -133,14 +134,18 @@ export default function LevelSidebar({
             return (
               <div
                 key={a}
-                className="flex items-center gap-2 py-1.5 text-[12px]"
-                style={{ opacity: c ? 1 : 0.4 }}
+                className="flex items-center gap-2.5 py-1.5 text-[12px]"
+                style={{ ...actorVars(st), opacity: c ? 1 : 0.45 }}
               >
-                <span aria-hidden>{st.icon}</span>
+                <span className="actor-chip grid h-6 w-6 shrink-0 place-items-center rounded-[7px]">
+                  <ActorIcon actor={a} size={14} />
+                </span>
                 <span className="truncate" style={{ color: "var(--ui-text-dim)" }}>
                   {st.label}
                 </span>
-                <span className="ml-auto font-mono text-[11.5px] font-semibold">{c}</span>
+                <span className="ml-auto font-mono text-[11.5px] font-semibold tabular-nums">
+                  {c}
+                </span>
               </div>
             );
           })}

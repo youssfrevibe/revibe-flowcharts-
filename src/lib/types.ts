@@ -20,12 +20,14 @@ export type DetailLevel = 1 | 2 | 3;
 /**
  * Who owns / performs the action at this step. Rendered as the card's border color so a
  * reader can scan the flow and see "who does what" at a glance.
- *   revibe  → Revibe team    (purple)
- *   seller  → Seller / supplier (orange)
- *   system  → Automated / system-driven (grey)
- *   carrier → Third party / carrier / lab (cyan)
+ *   customer → The customer themselves (blue)
+ *   revibe   → Revibe agent or ops (purple)
+ *   seller   → Seller / supplier (amber)
+ *   system   → Automation — engine, webhook, script (green)
+ *   carrier  → Courier / shipping partner (grey)
+ *   lab      → Lab / Naif — inspection and QC (pink)
  */
-export type Actor = "revibe" | "seller" | "system" | "carrier";
+export type Actor = "customer" | "revibe" | "seller" | "system" | "carrier" | "lab";
 
 /**
  * @deprecated Kept for backwards-compatibility with the old two-button picker. New nodes

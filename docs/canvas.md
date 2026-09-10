@@ -252,6 +252,34 @@ hiding it would make the step count lie.
 > running under the editor chrome has no bar to drive it and would keep stealing the
 > selection out from under whoever is editing.
 
+## Actors, icons and the dark theme
+
+Six roles — customer, revibe, seller, system (Automation), carrier (Courier), lab. Each
+entry in `ACTOR_STYLES` owns one hue, and `actorVars(style)` spreads it as CSS custom
+properties so the `.actor-chip` (plate) and `.actor-ink` (no plate) classes in
+globals.css resolve the light or dark pair themselves.
+
+> **Trap.** An inline style cannot carry a `.dark` selector, so a component that passes
+> a resolved colour hard-codes one theme. The cards did exactly that — `pillDark` as the
+> background with `accent` as the text — so an actor pill on a light card was a dark wash
+> under a pale label. Always go through `actorVars` + the class.
+
+Icons are SVG (`components/ActorIcon.tsx`), not emoji. Emoji render differently on every
+platform, cannot take the actor's colour, sit off the text baseline, and are announced by
+their Unicode name rather than the role.
+
+**Dark mode is neutral; colour is reserved for accents.** Card surfaces, the reader
+chrome and the row washes are greys — a decision card used to be `#221046`, a violet
+block the size of the whole shape, so a hundred of them drowned out the actor accents
+that are the only thing on the canvas encoding meaning. The silhouette and the label
+already say what type a node is.
+
+> **Trap.** Card internals must use `--ui-*` tokens, never `white/…` or `black/…` alphas.
+> The card became light-in-light-mode long after it was written, so those alphas were all
+> tuned for a dark surface: the tool chips were `bg-white/15 border-white/25` (invisible
+> on white) and the procedure block `bg-black/25` (a dark slab across the middle of a
+> white card).
+
 ## Card and pathway colour
 
 Cards follow the theme: light surfaces in light mode, dark washes in dark mode. Both

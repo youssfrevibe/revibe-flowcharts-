@@ -123,7 +123,12 @@ const ACTOR_ALIASES: Record<string, Actor> = {
   "3pl": "carrier",
   courier: "carrier",
   shipping: "carrier",
-  lab: "carrier",
+  naif: "lab",
+  qc: "lab",
+  inspection: "lab",
+  buyer: "customer",
+  client: "customer",
+  user: "customer",
   supplier: "seller",
   vendor: "seller",
   merchant: "seller",
@@ -136,7 +141,14 @@ const ACTOR_ALIASES: Record<string, Actor> = {
 };
 
 const VALID_TYPES = new Set<string>(["start", "step", "decision", "sub", "ok", "fail", "note"]);
-const VALID_ACTORS = new Set<string>(["revibe", "seller", "system", "carrier"]);
+const VALID_ACTORS = new Set<string>([
+  "customer",
+  "revibe",
+  "seller",
+  "system",
+  "carrier",
+  "lab",
+]);
 
 /** Bring an imported node onto the schema the renderer actually understands. */
 function coerceNodeShape(node: FlowNode): FlowNode {
