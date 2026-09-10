@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import { useCanvasStore } from "@/lib/store";
 import { FlowNode, FlowConnection, FlowData, NodeType, ConnType, Op, Collaborator, Port, TextPosition, Pt, Actor, DetailLevel } from "@/lib/types";
-import { atLevel, populatedLevels, mergeNodes, mergeConnections, levelOf, tourOrder, remapChildren, stripChildRefs, DEFAULT_LEVEL } from "@/lib/levels";
+import { atLevel, populatedLevels, mergeNodes, mergeConnections, levelOf, tourOrder, remapChildren, stripChildRefs, DEFAULT_LEVEL, LEVEL_LABELS } from "@/lib/levels";
 import {
   getDefaultData,
   getCachedData,
@@ -206,9 +206,28 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   // the others — that is what makes switching levels non-destructive.
   const view = useMemo(() => atLevel(data, level), [data, level]);
 
-  // Snap to a level that has content. Without this, opening a document whose upper levels
-  // have not been authored yet lands on a blank canvas with no obvious way back.
+  /**
+   * Snap to a level that has content — but only on the way IN.
+   *
+   * Opening a document on a level nobody has authored is a blank canvas with no
+   * explanation, so the snap exists. Applying it to a level the user deliberately
+   * picked, though, made every empty level unreachable: the switch was undone in the
+   * same tick, and because `addNode` stamps whatever level you are standing on, you
+   * could never stand on an empty one long enough to put the first node there. Delete
+   * the last "Every step" node and level 3 was gone for good; a document that had only
+   * ever had level 3 could never be given levels 1 and 2 by hand at all. Authoring
+   * levels was, in practice, only possible through the AI.
+   *
+   * So a deliberate choice pins the level and the snap stands down.
+   */
+  const levelPinnedRef = useRef(false);
+  const chooseLevel = useCallback((l: DetailLevel) => {
+    levelPinnedRef.current = true;
+    setLevel(l);
+  }, []);
+
   useEffect(() => {
+    if (levelPinnedRef.current) return;
     if (availableLevels.length && !availableLevels.includes(level)) {
       setLevel(availableLevels[availableLevels.length - 1]);
     }
@@ -3162,7 +3181,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       const target = levelOf(n);
       if (target !== levelRef.current) {
         levelFrameSkipRef.current = true;
-        setLevel(target);
+        chooseLevel(target);
         setTimeout(() => {
           select([id]);
           focusNode(id);
@@ -3264,7 +3283,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         onMode={setMode}
         level={level}
         availableLevels={availableLevels}
-        onLevel={setLevel}
+        onLevel={chooseLevel}
         onZoomIn={() => {
           const r = cwRef.current!.getBoundingClientRect();
           zoomAt(1.2, r.width / 2, r.height / 2);
@@ -3304,7 +3323,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
               view={view}
               level={level}
               available={availableLevels}
-              onLevel={setLevel}
+              onLevel={chooseLevel}
               title={projectTitle}
               subtitle={projectSubtitle}
               tourActive={tourIndex !== null}
@@ -3511,7 +3530,10 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
           )}
 
           {loaded && data.nodes.length === 0 && (
-            <div className="absolute inset-0 grid place-items-center z-20">
+            // `pointer-events-none`, or this overlay swallows the double-click it is
+            // telling you to make: it covers the whole canvas, so the gesture lands on
+            // the hint instead of the canvas underneath and selects the text.
+            <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center">
               <div className="text-center max-w-xs">
                 <p className="text-[13px] font-semibold" style={{ color: "var(--ui-text)" }}>
                   Nothing here yet
@@ -3519,6 +3541,29 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
                 <p className="mt-1 text-[11.5px] leading-relaxed" style={{ color: "var(--ui-text-faint)" }}>
                   Double-click anywhere to add a step, pick a shape from the tool strip, or let
                   AI draft the flow from a description.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Standing on a level nobody has authored. Distinct from an empty document:
+              the diagram has plenty in it, just not here, and without saying so this is
+              an unexplained blank canvas — which is exactly why the level used to be
+              made unselectable, the cure being worse than the disease. */}
+          {loaded && data.nodes.length > 0 && view.nodes.length === 0 && (
+            <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center">
+              <div className="max-w-xs text-center">
+                <p className="text-[13px] font-semibold" style={{ color: "var(--ui-text)" }}>
+                  Nothing at &ldquo;{LEVEL_LABELS[level].title}&rdquo; yet
+                </p>
+                <p
+                  className="mt-1 text-[11.5px] leading-relaxed"
+                  style={{ color: "var(--ui-text-faint)" }}
+                >
+                  {LEVEL_LABELS[level].blurb}
+                  {readOnly
+                    ? " Pick another zoom level on the left to see what has been mapped."
+                    : " Anything you add while this level is selected lands here — or let AI summarise the detailed view into it."}
                 </p>
               </div>
             </div>
@@ -3574,7 +3619,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
                   // The child IS the destination — do not let the level re-frame
                   // overwrite it with the start of the process.
                   levelFrameSkipRef.current = true;
-                  setLevel(target);
+                  chooseLevel(target);
                   // Selected *after* the switch, not with it: changing level clears the
                   // selection, so selecting first would simply be wiped.
                   setTimeout(() => {

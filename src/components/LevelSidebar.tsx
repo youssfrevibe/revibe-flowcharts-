@@ -97,16 +97,17 @@ export default function LevelSidebar({
             const on = l === level;
             const enabled = available.includes(l);
             return (
+              // An unauthored level is dimmed but NOT disabled. Disabling it was what
+              // made a level impossible to create: you cannot add the first node to a
+              // level you are not allowed to stand on.
               <button
                 key={l}
-                disabled={!enabled}
                 onClick={() => onLevel(l)}
                 className="rounded-xl border px-3 py-2.5 text-left transition-colors"
                 style={{
                   borderColor: on ? "var(--rv-purple)" : "var(--ui-border-soft)",
                   background: on ? "var(--rv-purple-soft)" : "transparent",
-                  opacity: enabled ? 1 : 0.4,
-                  cursor: enabled ? "pointer" : "not-allowed",
+                  opacity: enabled || on ? 1 : 0.55,
                 }}
               >
                 <div className="flex items-center gap-2">

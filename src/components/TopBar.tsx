@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Collaborator, DetailLevel } from "@/lib/types";
-import { LEVEL_LABELS } from "@/lib/levels";
+import { LEVEL_LABELS, LEVELS } from "@/lib/levels";
 import ThemeToggle from "./ThemeToggle";
 import Icon, { IconName } from "./Icon";
 
@@ -334,24 +334,42 @@ export default function TopBar(p: Props) {
 
         {/* Detail level. Only rendered once a document actually has more than one, so an
             unlevelled diagram is not offered a control that does nothing. */}
-        {p.availableLevels.length > 1 && (
+        {/* Also shown when the current level is unpopulated — otherwise stepping onto
+            an empty level in the editor hides the only control that gets you off it. */}
+        {(p.availableLevels.length > 1 || !p.availableLevels.includes(p.level)) && (
           <div
             className="flex items-center rounded-lg border p-0.5"
             style={{ borderColor: "var(--ui-border-soft)", background: "var(--ui-input)" }}
             title="Detail level"
           >
-            {p.availableLevels.map((l) => (
-              <button
-                key={l}
-                type="button"
-                onClick={() => p.onLevel(l)}
-                className="ui-btn h-7 w-7 text-[11.5px] font-bold"
-                style={p.level === l ? { background: "var(--rv-purple)", color: "#fff" } : undefined}
-                title={LEVEL_LABELS[l].title}
-              >
-                {l}
-              </button>
-            ))}
+            {/* All three, not only the populated ones. An empty level is dimmed rather
+                than hidden, because hiding it is what left a deleted level with no way
+                back — you cannot author a level you cannot select. */}
+            {LEVELS.map((l) => {
+              const populated = p.availableLevels.includes(l);
+              return (
+                <button
+                  key={l}
+                  type="button"
+                  onClick={() => p.onLevel(l)}
+                  className="ui-btn h-7 w-7 text-[11.5px] font-bold"
+                  style={
+                    p.level === l
+                      ? { background: "var(--rv-purple)", color: "#fff" }
+                      : populated
+                        ? undefined
+                        : { opacity: 0.45 }
+                  }
+                  title={
+                    populated
+                      ? LEVEL_LABELS[l].title
+                      : `${LEVEL_LABELS[l].title} — not authored yet`
+                  }
+                >
+                  {l}
+                </button>
+              );
+            })}
           </div>
         )}
 

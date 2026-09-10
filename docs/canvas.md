@@ -359,6 +359,26 @@ respected.
 > under `[data-chrome="reader"]` would break that — verified by diffing all 109 boxes
 > and 123 routes across the mode switch.
 
+## An empty level must stay reachable
+
+A level with no nodes is still selectable, in both the reader rail and the top bar, and
+the canvas explains itself instead of going blank. A deliberate choice sets
+`levelPinnedRef`, which stands the snap-to-populated-level effect down for the session.
+
+> **Trap — this made levels unauthorable.** The snap fired on *any* empty level, so a
+> deliberate switch was undone in the same tick. Because `addNode` stamps whatever level
+> you are standing on, you could never stand on an empty one long enough to place the
+> first node. Deleting the last "Every step" node lost level 3 permanently, and a
+> document that had only ever had level 3 could not be given levels 1 and 2 by hand at
+> all — the AI was the only way to author a level. Three separate things enforced it: the
+> snap, a `disabled` button in the rail, and the top bar rendering only populated levels.
+> All three had to change.
+
+> **Trap.** A full-canvas empty-state overlay swallows the gesture it advertises. The
+> "Nothing here yet · Double-click anywhere to add a step" panel covered the canvas with
+> default `pointer-events`, so the double-click selected its own text. Both empty states
+> are `pointer-events-none`.
+
 ## Three rules the level model depends on
 
 **1. Anything acting on "all nodes" goes through `currentScope()`.** Levels share one
