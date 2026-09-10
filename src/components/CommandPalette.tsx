@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef } from "react";
 import { Actor, FlowNode } from "@/lib/types";
+import { LEVEL_LABELS } from "@/lib/levels";
 import { DiagramMetadata } from "@/lib/types";
 import { getCachedDiagrams } from "@/lib/diagram-store";
 import { ACTOR_ORDER, ACTOR_STYLES } from "@/lib/node-colors";
@@ -11,6 +12,8 @@ export interface CommandAction {
   title: string;
   category: "Navigation" | "Nodes" | "Actions" | "View" | "Export" | "Flowcharts" | "Actors";
   shortcut?: string;
+  /** Small qualifier after the title — which detail level a step lives on. */
+  subtitle?: string;
   icon?: string;
   keywords?: string[];
   perform: () => void;
@@ -130,12 +133,19 @@ export default function CommandPalette({
       });
     });
 
-    // Nodes in current diagram
+    // Every step in the diagram, on ANY detail level.
+    //
+    // This used to receive only the level being viewed, so searching from "The shape"
+    // could not find any of the 100+ steps that live on "Every step" — it just returned
+    // nothing, which reads as "that step does not exist" rather than "it is on another
+    // level". Selecting a result on another level switches to it (see onSelectNode).
     nodes.forEach((n) => {
+      const lvl = (n.level ?? 3) as 1 | 2 | 3;
       list.push({
         id: `node-${n.id}`,
         title: n.label || `Untitled ${n.type}`,
         category: "Navigation",
+        subtitle: LEVEL_LABELS[lvl].title,
         icon: n.type === "decision" ? "◆" : n.type === "start" || n.type === "ok" ? "▶" : n.type === "note" ? "📌" : "⚙",
         keywords: [n.detail || "", n.actor || "", ...(n.tools || [])],
         perform: () => onSelectNode(n.id),
@@ -168,6 +178,7 @@ export default function CommandPalette({
     if (!q) return allCommands;
     return allCommands.filter((c) => {
       if (c.title.toLowerCase().includes(q) || c.category.toLowerCase().includes(q)) return true;
+      if (c.subtitle && c.subtitle.toLowerCase().includes(q)) return true;
       if (c.keywords?.some((kw) => kw.toLowerCase().includes(q))) return true;
       return false;
     });
@@ -255,6 +266,9 @@ export default function CommandPalette({
                   <div className="flex items-center gap-2.5 min-w-0">
                     <span className="w-5 text-center text-sm shrink-0">{item.icon}</span>
                     <span className="text-[13px] truncate">{item.title}</span>
+                    {item.subtitle && (
+                      <span className="text-[10.5px] text-zinc-400 shrink-0">{item.subtitle}</span>
+                    )}
                     <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-400 px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-700/60 shrink-0">
                       {item.category}
                     </span>

@@ -198,6 +198,21 @@ function FlowNodeCard({
 
   const widthStyle = getWidthStyle();
 
+  /**
+   * The frozen box, applied to the *visible* card and not only to its wrapper.
+   *
+   * The wrapper carries the selection ring and the ports, and it is held at the frozen
+   * size so pathways always meet the box they were routed against. The card inside it
+   * used to size to its own content, so at Compact density — where the same step renders
+   * shorter than the box captured at Detailed — the ring and the ports floated around a
+   * tall rectangle of empty space with a short card at the top of it.
+   *
+   * Giving the card the same minimum makes the box and the card the same object again.
+   * `minWidth` deliberately overrides the `max-w-*` class (min beats max in CSS), for
+   * the same reason: a card narrower than its box leaves the side ports off its edge.
+   */
+  const frozenBox = node.size ? { minWidth: node.size.w, minHeight: node.size.h } : null;
+
   // Ports & Quick-Add handles
   const ports = (["top", "bottom", "left", "right"] as const).map((port) => {
     const pos: Record<string, string> = {
@@ -347,9 +362,9 @@ function FlowNodeCard({
     return (
       <div {...wrapperProps}>
         <div
-          style={{ ...customStyle, ...widthStyle, borderRadius: 9999 }}
+          style={{ ...customStyle, ...widthStyle, ...frozenBox, borderRadius: 9999 }}
           title={actorTitle}
-          className={`rounded-full border shadow-md min-w-[180px] max-w-[300px] px-6 py-3.5 ${alignCls} ${colorCls} relative overflow-hidden`}
+          className={`rounded-full border shadow-md min-w-[180px] max-w-[300px] px-6 py-3.5 flex flex-col justify-center ${alignCls} ${colorCls} relative overflow-hidden`}
         >
           {actorStyle && (
             <div
@@ -391,7 +406,7 @@ function FlowNodeCard({
     return (
       <div {...wrapperProps}>
         <div
-          style={{ ...customStyle, ...widthStyle }}
+          style={{ ...customStyle, ...widthStyle, ...frozenBox }}
           className={`rounded-xl border shadow-md min-w-[170px] max-w-[270px] p-3.5 transition-all ${colorCls} relative`}
         >
           {/* Header Bar */}
@@ -454,7 +469,7 @@ function FlowNodeCard({
   return (
     <div {...wrapperProps}>
       <div
-        style={{ ...customStyle, ...widthStyle }}
+        style={{ ...customStyle, ...widthStyle, ...frozenBox }}
         title={actorTitle}
         className={`relative rounded-xl border shadow-md min-w-[210px] transition-shadow ${
           isDetailed ? "max-w-[350px]" : "max-w-[290px]"

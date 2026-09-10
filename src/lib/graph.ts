@@ -422,6 +422,89 @@ function isotonicNonDecreasing(y: number[]): number[] {
  * along the axis of least penetration. Iterative and bounded; safe for a few hundred nodes.
  * Works on whatever positions the nodes currently have — usable as a standalone "declutter".
  */
+/**
+ * Does this document already carry a layout somebody meant?
+ *
+ * Import used to auto-arrange unconditionally, which is right for a file exported from
+ * another tool — those arrive as a sprawl, or with every node stacked at the origin — and
+ * badly wrong for a file exported from *here*, where arranging threw away the author's
+ * work. Measured on the 109-step return-claims map: re-layout moved all 109 nodes, the
+ * furthest by 15,100px, and discarded 8 hand-drawn routes and 36 pinned ports.
+ *
+ * So decide instead of assuming. Two things make a layout deliberate:
+ *
+ *  - **Someone routed the pathways.** A waypoint or a pinned port is a decision no
+ *    exporter invents; it only exists because a person dragged something. One is enough.
+ *  - **The boxes are laid out rather than piled up.** A real layout has nodes in
+ *    distinct places that mostly do not overlap. A sprawl to be arranged has them
+ *    stacked, coincident, or all on one line.
+ *
+ * Conservative by design: when in doubt it answers `false` and the old arrange-on-import
+ * behaviour applies, because arranging a good layout is annoying but recoverable (undo),
+ * whereas *not* arranging a pile of stacked nodes just looks broken.
+ */
+export function layoutLooksIntentional(
+  nodes: FlowNode[],
+  connections: FlowConnection[],
+  sizes: Map<string, Size>
+): boolean {
+  if (nodes.length < 2) return true;
+
+  // 1. Any hand-made routing decision settles it.
+  for (const c of connections) {
+    if (c.fromPort || c.toPort) return true;
+    if (Array.isArray(c.waypoints) && c.waypoints.length > 0) return true;
+  }
+
+  // 2. Distinct positions? All-identical (or missing) coordinates mean no layout at all.
+  const seen = new Set<string>();
+  for (const n of nodes) {
+    if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) return false;
+    seen.add(Math.round(n.x) + "," + Math.round(n.y));
+  }
+  if (seen.size < nodes.length * 0.9) return false;
+
+  // 3. Not piled up. Count nodes whose box overlaps another; a deliberate layout has
+  //    very few. Grid-bucketed so this stays linear-ish rather than N^2 on big maps.
+  const cell = 400;
+  const grid = new Map<string, { x: number; y: number; w: number; h: number }[]>();
+  let overlapping = 0;
+  for (const n of nodes) {
+    const s = sizeOf(n.id, sizes);
+    const box = { x: n.x, y: n.y, w: s.w, h: s.h };
+    let hit = false;
+    const c0 = Math.floor(box.x / cell);
+    const c1 = Math.floor((box.x + box.w) / cell);
+    const r0 = Math.floor(box.y / cell);
+    const r1 = Math.floor((box.y + box.h) / cell);
+    for (let cx = c0 - 1; cx <= c1 + 1 && !hit; cx++) {
+      for (let cy = r0 - 1; cy <= r1 + 1 && !hit; cy++) {
+        for (const o of grid.get(cx + ":" + cy) ?? []) {
+          if (
+            box.x < o.x + o.w &&
+            box.x + box.w > o.x &&
+            box.y < o.y + o.h &&
+            box.y + box.h > o.y
+          ) {
+            hit = true;
+            break;
+          }
+        }
+      }
+    }
+    if (hit) overlapping++;
+    for (let cx = c0; cx <= c1; cx++) {
+      for (let cy = r0; cy <= r1; cy++) {
+        const k = cx + ":" + cy;
+        if (!grid.has(k)) grid.set(k, []);
+        grid.get(k)!.push(box);
+      }
+    }
+  }
+  // A tenth of the map colliding is a pile, not a layout.
+  return overlapping <= Math.max(1, nodes.length * 0.1);
+}
+
 export function resolveOverlaps(nodes: FlowNode[], sizes: Map<string, Size>, gap = 40): FlowNode[] {
   if (nodes.length < 2) return nodes;
   const pos = nodes.map((n) => ({ id: n.id, x: n.x, y: n.y, ...sizeOf(n.id, sizes) }));

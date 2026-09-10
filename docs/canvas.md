@@ -80,6 +80,24 @@ editor got there first instead of overwriting each other with their own measurem
 > mounts, and every consumer still falls back to `210×84`. Culling, virtualisation and
 > lazy rendering therefore remain dangerous for uncaptured nodes.
 
+### Reading is the default
+
+`mode` starts at **"view"** for everyone. Most visits to a process map are reads, and
+opening straight into the editor both buried the process under tool chrome and left the
+document editable by anyone who followed a link. Editing is one click on the Edit
+toggle; `?view=1` still pins the reader and locks that toggle.
+
+Two things follow from this and must stay true:
+
+- **The name prompt belongs to editing, not arriving.** The identity modal now fires
+  when `mode` becomes "edit" without a stored user — never on mount. Asking a reader to
+  identify themselves for collaboration they will never do was the first thing anyone
+  saw once reading became the default.
+- **Whoever changes the level owns the camera.** A level switch re-frames (see
+  [The opening frame](#the-opening-frame)), but search results and reader drill-down
+  switch level *in order to* land on a specific step. They set `levelFrameSkipRef`, or
+  the re-frame fires 180ms later and throws the destination away — which it did.
+
 ### Editor and reader mode
 
 `mode` is `"edit" | "view"`, and it does two things: swaps the chrome — `LayersPanel` →
@@ -128,6 +146,20 @@ Both are set from the **cache-paint layout effect** and the cloud effect, never 
 > *before* the cloud copy replaces it. Anything that rewrites the document on open
 > must key off `docSettled`, or the cloud response silently undoes the rewrite. This
 > is exactly how auto-arrange-on-import appeared to do nothing.
+
+## Search spans every level
+
+The command palette receives `data.nodes`, not `view.nodes`, and each step is labelled
+with the level it lives on. Selecting one goes through `goToNode`, which switches level
+first when the target is elsewhere and selects **after** the switch.
+
+> **Trap.** It used to receive the current level only, so searching from "The shape"
+> could not find any of the 100+ steps on "Every step" — it returned nothing, which
+> reads as "no such step" rather than "it is on another level".
+
+Find & Replace is *deliberately* still scoped to the current level: replace rewrites
+text, and rewriting text on levels nobody can review is the failure that scoping fixed.
+Finding is safe across levels; replacing is not.
 
 ## Viewport culling
 

@@ -35,6 +35,25 @@ the importer fell back to `from__to` locally while each peer generated its own, 
 dragging an endpoint afterwards duplicated the pathway on every peer instead of moving
 it.
 
+### A layout the file already has is kept
+
+Import calls `layoutLooksIntentional(nodes, connections, sizes)` and only auto-arranges
+when it answers false. A layout counts as deliberate if **any** connection carries a
+waypoint or a pinned port (nobody but a person makes those), or if the boxes sit in
+distinct places without piling up (≤10% overlapping).
+
+> **Trap.** Import used to arrange unconditionally. That is right for a file from
+> another tool — those arrive stacked at the origin or sprawled — and destructive for a
+> file exported from here. Measured on the 109-step return-claims map: re-layout moved
+> **all 109 nodes, the furthest by 15,100px**, and deleted **8 hand-drawn routes and 36
+> pinned ports**. The router itself was not the problem; measured on the same document
+> it puts **0** pathways through a node box either way.
+
+The heuristic is deliberately conservative — when unsure it answers false and arranges,
+because arranging a good layout is annoying but undoable, whereas leaving a pile of
+stacked nodes alone just looks broken. The same check guards the deploy-from-home-page
+path, whose marker means "just deployed", not "needs rearranging".
+
 ### Coordinates are not trusted
 
 Source coordinates are saved as-is and **re-arranged on first open**, not at import

@@ -17,7 +17,15 @@ import {
   type UnsavedWork,
 } from "@/lib/diagram-store";
 import { applyOp, backfillConnIds, connId, newConnId } from "@/lib/ops";
-import { computeBounds, autoLayout, resolveOverlaps, sizeOf, effectiveSizes, Size } from "@/lib/graph";
+import {
+  computeBounds,
+  autoLayout,
+  resolveOverlaps,
+  sizeOf,
+  effectiveSizes,
+  layoutLooksIntentional,
+  Size,
+} from "@/lib/graph";
 import { LayoutPrefs, loadLayoutPrefs, saveLayoutPrefs, DEFAULT_PREFS } from "@/lib/layout-prefs";
 import { buildDiagramSVG } from "@/lib/export-svg";
 import { NODE_COLOR_PRESETS } from "@/lib/node-colors";
@@ -114,17 +122,26 @@ const snapVal = (v: number, on: boolean) => (on ? Math.round(v / GRID) * GRID : 
 export default function FlowCanvas({ slug, title, subtitle, exportFilename, readOnly: readOnlyProp = false }: FlowCanvasProps) {
   /** Editor or reader chrome. A `?view=1` link pins this to "view" and the toggle is
    *  disabled; otherwise the same person switches between the two. */
-  const [mode, setMode] = useState<"edit" | "view">(readOnlyProp ? "view" : "edit");
+  /**
+   * Everyone lands in the reader.
+   *
+   * Opening a process map straight into the editor puts a toolbar, a shapes rail and an
+   * inspector in front of someone who came to *read* the process — and it makes the
+   * document editable by anyone who follows a link, so a stray drag silently rewrites a
+   * shared map. Most visits to a diagram are reads. Editing is one click on the Edit
+   * toggle, and `?view=1` still pins the reader so the toggle cannot be used at all.
+   */
+  const [mode, setMode] = useState<"edit" | "view">("view");
   /** Deliberately shadows the prop. Viewer mode locks the document exactly the way a
    *  view-only link does, so every existing `readOnly` guard — `commit`, `setTransient`,
    *  undo/redo, nudge, reset, restore — covers it without being rewritten. */
   const readOnly = readOnlyProp || mode === "view";
 
   // The diagram page reads `?view=1` in a post-mount effect (so its own first render
-  // matches the server's), which means `readOnlyProp` arrives as false and flips to true
-  // on the second render — after the `useState` above has already picked "edit". Without
-  // this sync a view-only link showed the *editor* chrome with its buttons merely
-  // disabled: no level rail, no detail panel, and connection ports still on the cards.
+  // matches the server's), so `readOnlyProp` arrives as false and flips to true on the
+  // second render. Both start in "view" now, so this no longer changes what is shown —
+  // it is kept because `readOnlyProp` is what *locks* the toggle, and a mode that
+  // disagreed with it would let a view-only link be switched into the editor.
   useEffect(() => {
     if (readOnlyProp) setMode("view");
   }, [readOnlyProp]);
@@ -248,6 +265,13 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
    *  layout settles has a 0x0 canvas for as long as that lasts — longer than any retry
    *  worth spinning — so the frame is re-attempted when the canvas gains a size. */
   const pendingFrameRef = useRef(false);
+  /**
+   * Set when a level change already has a destination — a search result or a reader
+   * drilling into a summary step. Those switch level and then focus a specific node, and
+   * the opening re-frame would otherwise land on the start of the process 180ms later
+   * and throw the destination away. Whoever switches the level owns the camera.
+   */
+  const levelFrameSkipRef = useRef(false);
   /** Work from a previous session that never reached the server. Offered back rather
    *  than applied: silently choosing either copy is how someone loses an afternoon. */
   const [unsaved, setUnsaved] = useState<UnsavedWork | null>(null);
@@ -465,11 +489,24 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   // auto-arrange with the pre-arrange coordinates.
 
   /* ------------------------------ identity ----------------------------- */
+  /**
+   * Ask who you are when you start *editing*, not when you arrive.
+   *
+   * The name is only used to label your presence to other editors, so demanding it up
+   * front put a modal in front of every reader — someone who opened a link to read a
+   * process was stopped and asked to identify themselves for collaboration they were
+   * never going to do. Now that reading is the default mode, that was the first thing
+   * anyone saw. A reader with no name simply never joins the presence channel, which is
+   * also one fewer socket.
+   */
   useEffect(() => {
     const u = getUser();
     if (u) setUser(u);
-    else setAskName(true);
   }, []);
+
+  useEffect(() => {
+    if (mode === "edit" && !user && !getUser()) setAskName(true);
+  }, [mode, user]);
 
   /* --------------------------- realtime sync --------------------------- */
   /**
@@ -655,6 +692,11 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   useEffect(() => {
     if (!framedOnce.current) {
       framedOnce.current = true;
+      return;
+    }
+    if (levelFrameSkipRef.current) {
+      // Somebody is navigating to a specific step on this level — leave the camera to them.
+      levelFrameSkipRef.current = false;
       return;
     }
     pendingFrameRef.current = true;
@@ -1354,8 +1396,16 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     try {
       localStorage.removeItem(ARRANGE_ON_OPEN_KEY);
     } catch {}
-    void measureThenLayout(currentScope().nodes.map((n) => n.id));
-  }, [docSettled, readOnly, slug, measureThenLayout]);
+    const scope = currentScope();
+    // Same judgement as the file importer: the marker says "this was just deployed",
+    // not "this needs rearranging". A deployed file that already has a real layout
+    // keeps it.
+    if (layoutLooksIntentional(scope.nodes, scope.connections, sizesRef.current)) {
+      setTimeout(() => frameRef.current(), 180);
+      return;
+    }
+    void measureThenLayout(scope.nodes.map((n) => n.id));
+  }, [docSettled, readOnly, slug, measureThenLayout, currentScope]);
 
   const runAutoLayout = useCallback(() => {
     const scope = currentScope();
@@ -2844,7 +2894,17 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
             : (levels[levels.length - 1] ?? DEFAULT_LEVEL);
           setLevel(target);
           levelRef.current = target;
-          void measureThenLayout(atLevel(next, target).nodes.map((n) => n.id));
+          const scoped = atLevel(next, target);
+          // Only arrange a file that has no layout worth keeping. Importing used to
+          // re-lay-out unconditionally, which threw away exactly the work the author
+          // came to preserve — on the return-claims map that moved all 109 nodes (one by
+          // 15,100px) and deleted 8 hand-drawn routes and 36 pinned ports. Auto-arrange
+          // is still one click away in the inspector if the result is not what they want.
+          if (layoutLooksIntentional(scoped.nodes, scoped.connections, sizesRef.current)) {
+            setTimeout(() => frameRef.current(), 180);
+          } else {
+            void measureThenLayout(scoped.nodes.map((n) => n.id));
+          }
         } else {
           alert("Invalid flowchart JSON format.");
         }
@@ -3064,6 +3124,34 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
 
   // The step a reader has open. Viewer cards carry almost nothing on purpose — a card
   // dense enough to be complete is too dense to scan — so the detail lives in the panel.
+  /**
+   * Go to a step by id, wherever it lives.
+   *
+   * Search results and any other "take me to this step" affordance must work across
+   * detail levels, so switch level first when the target is not on the one being shown.
+   * Selection is applied *after* the switch, because changing level clears it — the same
+   * ordering the reader's drill-down uses.
+   */
+  const goToNode = useCallback(
+    (id: string) => {
+      const n = dataRef.current.nodes.find((x) => x.id === id);
+      if (!n) return;
+      const target = levelOf(n);
+      if (target !== levelRef.current) {
+        levelFrameSkipRef.current = true;
+        setLevel(target);
+        setTimeout(() => {
+          select([id]);
+          focusNode(id);
+        }, 60);
+        return;
+      }
+      select([id]);
+      focusNode(id);
+    },
+    [select, focusNode]
+  );
+
   const detailNode = useMemo(
     () => (selectedIds.length === 1 ? (view.nodes.find((n) => n.id === selectedIds[0]) ?? null) : null),
     [selectedIds, view.nodes]
@@ -3460,6 +3548,9 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
                   // Stepping into what a summary collapses means dropping a level and
                   // landing on that child, which is the whole point of `children`.
                   const target = (levelOf(child) as DetailLevel) ?? DEFAULT_LEVEL;
+                  // The child IS the destination — do not let the level re-frame
+                  // overwrite it with the start of the process.
+                  levelFrameSkipRef.current = true;
                   setLevel(target);
                   // Selected *after* the switch, not with it: changing level clears the
                   // selection, so selecting first would simply be wiped.
@@ -3586,11 +3677,8 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       <CommandPalette
         isOpen={showCommandPalette}
         onClose={() => setShowCommandPalette(false)}
-        nodes={view.nodes}
-        onSelectNode={(id) => {
-          select([id]);
-          focusNode(id);
-        }}
+        nodes={data.nodes}
+        onSelectNode={goToNode}
         onAutoLayout={runAutoLayout}
         onFixOverlaps={runFixOverlaps}
         onAutoConnectAll={autoConnectAllNodes}
