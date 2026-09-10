@@ -35,6 +35,36 @@ the importer fell back to `from__to` locally while each peer generated its own, 
 dragging an endpoint afterwards duplicated the pathway on every peer instead of moving
 it.
 
+### Every import goes through `normalize()`
+
+Both entry points — `deployFlowchartJSON` on the home page and `loadParsedJSON` on the
+canvas — normalise **before the first save**, the same way a load from cache or cloud
+does. `normalize()` is `migrateNodeFields` → `coerceNodeShape` → drop dangling and
+self-referencing pathways → `backfillConnIds`.
+
+Neither used to. The unmigrated document was what reached the database, and the
+renderer then failed *silently* on anything off-schema:
+
+- **An unknown `type` falls through every shape branch** and draws as a plain
+  rectangle. `type: "end"` — present in three of the five live diagrams — meant the
+  step where the process finishes looked like an ordinary step.
+- **An unknown `actor` gets `undefined` from `ACTOR_STYLES`**, so the card loses its
+  owner pill *and* its colour strip, and the "Who is involved" rail counts it under
+  nobody. `actor: "thirdparty"` (the schema calls it `carrier`) hid six owners on the
+  claims map alone; the rail read 6 where it should have read 12.
+
+`coerceNodeShape` maps unambiguous synonyms only (`end`/`stop`/`done` → `ok`,
+`thirdparty`/`3pl`/`courier` → `carrier`, and so on), drops an actor it cannot map
+rather than keep one that renders as nothing, and repairs values that break the whole
+diagram rather than one node: a `level` outside 1–3 (the node exists, is saved, and can
+never be seen), a non-positive `size` (collapses the card and sends every pathway into
+its centre), and a non-finite `x`/`y` (poisons `computeBounds`, so fit-to-view and
+export break for *every* node).
+
+Normalising is **not** a layout step, and there are tests to keep it that way: across
+the five real documents it moves 0 nodes and preserves every waypoint and pinned port,
+and it is idempotent.
+
 ### A layout the file already has is kept
 
 Import calls `layoutLooksIntentional(nodes, connections, sizes)` and only auto-arranges

@@ -12,11 +12,12 @@ import {
   resetToDefault,
   generateNodeId,
   updateDiagramMetadata,
+  normalize,
   getUnsaved,
   clearUnsaved,
   type UnsavedWork,
 } from "@/lib/diagram-store";
-import { applyOp, backfillConnIds, connId, newConnId } from "@/lib/ops";
+import { applyOp, connId, newConnId } from "@/lib/ops";
 import {
   computeBounds,
   autoLayout,
@@ -2857,12 +2858,18 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       try {
         const parsed = JSON.parse(content);
         if (Array.isArray(parsed.nodes)) {
-          const nodes = parsed.nodes as FlowNode[];
-          // Give every imported connection a stable id *before* it is committed, so the
-          // `doc.replace` carries the same ids the local copy holds. Without this the
-          // importer fell back to `from__to` locally while peers generated their own,
-          // and dragging an endpoint afterwards duplicated the pathway on every peer.
-          let connections = backfillConnIds((parsed.connections || []) as FlowConnection[]);
+          // Normalise on the way in, exactly as a load from cache or cloud does.
+          // This assigns connection ids before the `doc.replace` is broadcast (peers
+          // otherwise generate their own and an endpoint drag duplicates the pathway),
+          // resolves legacy stage fields, drops pathways to nodes the file does not
+          // contain, and maps `type`/`actor` values the renderer does not know onto
+          // ones it does.
+          const clean = normalize({
+            nodes: (parsed.nodes || []) as FlowNode[],
+            connections: (parsed.connections || []) as FlowConnection[],
+          });
+          const nodes = clean.nodes;
+          let connections = clean.connections;
           if (connections.length === 0 && nodes.length > 1) {
             const sorted = [...nodes].sort((a, b) => a.y - b.y || a.x - b.x);
             connections = sorted.slice(0, -1).map((src, i) => ({
@@ -3199,7 +3206,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     if (!step) return;
     t.select([step.id]);
     t.focusNode(step.id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- see tourRef above
+    // Intentionally only [tourIndex] — everything else is read through tourRef above.
   }, [tourIndex]);
 
   // Leaving reader mode ends the tour: the editor chrome has no bar to drive it from, and

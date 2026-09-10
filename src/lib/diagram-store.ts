@@ -1,4 +1,5 @@
-import { DiagramMetadata, FlowData, FlowNode } from "./types";
+import { Actor, DiagramMetadata, FlowData, FlowNode, NodeType } from "./types";
+import { DEFAULT_LEVEL } from "./levels";
 import { getInitialNodes, getInitialConnections } from "./initial-data";
 import { getKBNodes, getKBConnections } from "./kb-data";
 import { backfillConnIds } from "./ops";
@@ -48,8 +49,15 @@ export function getDefaultData(slug: string): FlowData {
   });
 }
 
-function normalize(data: FlowData): FlowData {
-  return { nodes: (data.nodes || []).map(migrateNodeFields), connections: backfillConnIds(data.connections || []) };
+export function normalize(data: FlowData): FlowData {
+  const nodes = (data.nodes || []).map((n) => coerceNodeShape(migrateNodeFields(n)));
+  const ids = new Set(nodes.map((n) => n.id));
+  // A pathway to a node that is not here draws into empty space, and a self-loop is
+  // skipped by the router so it silently disappears — drop both rather than carry them.
+  const connections = backfillConnIds(
+    (data.connections || []).filter((c) => c && c.from !== c.to && ids.has(c.from) && ids.has(c.to))
+  );
+  return { nodes, connections };
 }
 
 /**
@@ -70,6 +78,124 @@ function normalize(data: FlowData): FlowData {
  * Every other property — including custom app-specific extras like `newOmsFlow` and
  * `oldAppStatus` — is left untouched so nothing is lost on save.
  */
+/**
+ * Values other tools write that mean something this schema already has.
+ *
+ * A node whose `type` is not one of ours falls through every shape branch and renders as
+ * a plain rectangle, and a node whose `actor` is not one of ours gets `undefined` from
+ * `ACTOR_STYLES` — no owner pill, no colour strip, and it is counted under nobody in the
+ * "Who is involved" rail. Both fail *silently*, which is how the live claims map ended up
+ * with an end node drawn as an ordinary step and six nodes that looked ownerless.
+ *
+ * Only unambiguous synonyms belong here. Anything genuinely unknown is left alone rather
+ * than guessed at.
+ */
+const TYPE_ALIASES: Record<string, NodeType> = {
+  end: "ok",
+  terminator: "ok",
+  stop: "ok",
+  finish: "ok",
+  success: "ok",
+  done: "ok",
+  error: "fail",
+  failure: "fail",
+  reject: "fail",
+  rejected: "fail",
+  begin: "start",
+  entry: "start",
+  process: "step",
+  action: "step",
+  task: "step",
+  subprocess: "sub",
+  subflow: "sub",
+  comment: "note",
+  sticky: "note",
+  condition: "decision",
+  branch: "decision",
+  if: "decision",
+  gateway: "decision",
+};
+
+const ACTOR_ALIASES: Record<string, Actor> = {
+  thirdparty: "carrier",
+  third_party: "carrier",
+  "third-party": "carrier",
+  "3pl": "carrier",
+  courier: "carrier",
+  shipping: "carrier",
+  lab: "carrier",
+  supplier: "seller",
+  vendor: "seller",
+  merchant: "seller",
+  automated: "system",
+  automatic: "system",
+  bot: "system",
+  ops: "revibe",
+  agent: "revibe",
+  team: "revibe",
+};
+
+const VALID_TYPES = new Set<string>(["start", "step", "decision", "sub", "ok", "fail", "note"]);
+const VALID_ACTORS = new Set<string>(["revibe", "seller", "system", "carrier"]);
+
+/** Bring an imported node onto the schema the renderer actually understands. */
+function coerceNodeShape(node: FlowNode): FlowNode {
+  let next = node;
+
+  const rawType = String(next.type ?? "").toLowerCase().trim();
+  if (!VALID_TYPES.has(rawType)) {
+    // Unknown but recognisable → the type it means. Unknown and unrecognisable → "step",
+    // which is what it already rendered as, but now the document says so honestly.
+    next = { ...next, type: TYPE_ALIASES[rawType] ?? "step" };
+  } else if (rawType !== next.type) {
+    next = { ...next, type: rawType as NodeType };
+  }
+
+  if (next.actor !== undefined) {
+    const rawActor = String(next.actor).toLowerCase().trim();
+    if (!VALID_ACTORS.has(rawActor)) {
+      const mapped = ACTOR_ALIASES[rawActor];
+      // Drop an unmappable actor rather than keep a value that renders as nothing while
+      // still reading as "this step has an owner".
+      next = mapped ? { ...next, actor: mapped } : { ...next, actor: undefined };
+    } else if (rawActor !== next.actor) {
+      next = { ...next, actor: rawActor as Actor };
+    }
+  }
+
+  // A level outside 1-3 filters the node out of every view — it exists and is saved, but
+  // can never be seen or reached.
+  if (next.level !== undefined && next.level !== 1 && next.level !== 2 && next.level !== 3) {
+    next = { ...next, level: DEFAULT_LEVEL };
+  }
+
+  // A non-positive or malformed frozen box collapses the card and sends every pathway
+  // into its centre. Better to have no frozen size and re-measure.
+  if (next.size !== undefined) {
+    const s = next.size as { w?: unknown; h?: unknown } | null;
+    const ok =
+      s &&
+      typeof s.w === "number" &&
+      typeof s.h === "number" &&
+      Number.isFinite(s.w) &&
+      Number.isFinite(s.h) &&
+      s.w > 0 &&
+      s.h > 0;
+    if (!ok) {
+      const { size, ...rest } = next;
+      void size;
+      next = rest;
+    }
+  }
+
+  // NaN coordinates put a card nowhere and poison computeBounds, so fit-to-view and
+  // export break for the whole diagram, not just this node.
+  if (!Number.isFinite(next.x)) next = { ...next, x: 0 };
+  if (!Number.isFinite(next.y)) next = { ...next, y: 0 };
+
+  return next;
+}
+
 function migrateNodeFields(
   node: FlowNode & { newOmsStage?: string; return_internal_stage?: string; return_external_stage?: string }
 ): FlowNode {

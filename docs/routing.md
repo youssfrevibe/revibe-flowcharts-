@@ -1,4 +1,13 @@
-# Routing — `src/lib/routing.ts`
+# Routing
+
+> **Measured, so nobody re-litigates it.** Across all five live documents and every
+> populated level — 371 pathways, 163 labels — the router puts **0** pathways through a
+> node box, draws **0** on top of each other, and produces **0** label collisions
+> (label-vs-label or label-vs-node). Two pairs run closer than 8px. When a diagram looks
+> tangled the cause has not been the router; on the claims map it was the importer
+> re-running auto-layout and discarding 8 hand-drawn routes and 36 pinned ports. Measure
+> before changing anything here — `separateOverlaps`, `planLanes` and the A* fallback
+> are load-bearing and interact. — `src/lib/routing.ts`
 
 Everything geometric about a connection: which sides it leaves and enters, the
 orthogonal path it takes, how back edges nest into return lanes, how manual

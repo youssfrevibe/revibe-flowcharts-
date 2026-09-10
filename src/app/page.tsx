@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
-import { DiagramMetadata } from "@/lib/types";
+import { DiagramMetadata, FlowData } from "@/lib/types";
 import {
+  normalize,
   getCachedDiagrams,
   fetchCloudDiagrams,
   createCustomDiagram,
@@ -124,9 +125,15 @@ export default function Home() {
     }
     const diagramTitle = fallbackTitle.trim() || "Imported Flowchart";
     const created = await createCustomDiagram(diagramTitle, "Imported from JSON");
+    // Normalise BEFORE the first save, not on some later load. Without this the
+    // unmigrated document is what lands in the database: legacy `stage`/`stageKind`
+    // fields unresolved, connections without ids, and `type`/`actor` values the
+    // renderer does not know — which is how an "end" node came to draw as an ordinary
+    // step and six "thirdparty" nodes lost their owner badge entirely.
+    const normalised = normalize({ nodes, connections } as unknown as FlowData);
     await saveToCloud(
       created.slug,
-      { nodes, connections },
+      normalised,
       { title: diagramTitle, description: "Imported from JSON", color: "emerald", isCustom: true }
     );
     try {
