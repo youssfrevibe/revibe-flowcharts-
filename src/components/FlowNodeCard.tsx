@@ -258,18 +258,35 @@ function FlowNodeCard({
     );
   });
 
-  const stateShadow = isSelected
-    ? "ring-2 ring-sky-400 ring-offset-2 ring-offset-transparent shadow-xl scale-[1.008]"
-    : isDropTarget
-    ? "ring-2 ring-emerald-400 ring-offset-2 ring-offset-transparent shadow-lg scale-[1.008]"
-    : "hover:shadow-lg";
+  /**
+   * Emphasis has to follow the silhouette, and a diamond has not got a rectangular one.
+   *
+   * `ring-*` and `shadow-*` both paint the wrapper's box, which for every other shape
+   * IS the visible card — but a decision is an SVG polygon inside a wrapper twice its
+   * area, so hovering or selecting one drew a rectangle floating around it with corners
+   * where the diamond has none. The diamond takes its emphasis on the polygon instead
+   * (see `diamondStroke` below and the `[data-shape="decision"]` rules in globals.css),
+   * which is the actual outline, so it can only ever match.
+   */
+  const isDiamond = shape === "decision";
+  const stateShadow = isDiamond
+    ? isSelected || isDropTarget
+      ? "scale-[1.008]"
+      : ""
+    : isSelected
+      ? "ring-2 ring-sky-400 ring-offset-2 ring-offset-transparent shadow-xl scale-[1.008]"
+      : isDropTarget
+        ? "ring-2 ring-emerald-400 ring-offset-2 ring-offset-transparent shadow-lg scale-[1.008]"
+        : "hover:shadow-lg";
 
   const wrapperProps = {
     ref,
     role: "article",
     "aria-label": `${TYPE_LABELS[node.type]}: ${node.label}`,
     tabIndex: 0,
-    className: `absolute cursor-move select-none group z-10 transition-transform duration-100 ${stateShadow}`,
+    className: `absolute cursor-move select-none group z-10 transition-transform duration-100 ${stateShadow}${
+      isSelected ? " is-selected" : ""
+    }`,
     style: {
       left: node.x,
       top: node.y,
@@ -284,6 +301,8 @@ function FlowNodeCard({
       ...(node.size ? { minWidth: node.size.w, minHeight: node.size.h } : null),
     } as React.CSSProperties,
     "data-node-id": node.id,
+    // Lets globals.css apply box-shaped emphasis only to box-shaped cards.
+    "data-shape": shape,
     onMouseDown: handleMouseDown,
     onDoubleClick: (e: React.MouseEvent) => {
       e.stopPropagation();
@@ -310,14 +329,24 @@ function FlowNodeCard({
         <svg
           viewBox="0 0 100 70"
           preserveAspectRatio="none"
-          className="absolute inset-0 w-full h-full pointer-events-none drop-shadow-md overflow-visible"
+          className="absolute inset-0 w-full h-full pointer-events-none overflow-visible"
         >
           <polygon
             points="50,2 97,35 50,68 3,35"
             fill={themeFill}
-            stroke={actorStyle?.ring || "var(--ui-border-strong)"}
-            strokeWidth={actorStyle ? "2" : "1"}
+            stroke={
+              isSelected
+                ? "var(--ui-selection)"
+                : isDropTarget
+                  ? "var(--rv-success)"
+                  : actorStyle?.ring || "var(--ui-border-strong)"
+            }
+            strokeWidth={isSelected || isDropTarget ? "4" : actorStyle ? "2" : "1"}
             strokeLinejoin="round"
+            // preserveAspectRatio="none" squashes the 100x70 viewBox to the card's real
+            // aspect, and it squashes the stroke with it. Without this the outline is
+            // visibly thicker on the short axis than the long one.
+            vectorEffect="non-scaling-stroke"
           />
         </svg>
 

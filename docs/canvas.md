@@ -359,6 +359,27 @@ respected.
 > under `[data-chrome="reader"]` would break that — verified by diffing all 109 boxes
 > and 123 routes across the mode switch.
 
+## Emphasis follows the silhouette
+
+Hover and selection must trace the shape a reader can see. `ring-*` and `shadow-*` paint
+the wrapper's box, and for a rectangle, a pill or a note the wrapper *is* the visible
+card — but a decision is an SVG polygon inside a wrapper roughly twice its area.
+
+The wrapper carries `data-shape`, box-shaped emphasis is scoped to
+`:not([data-shape="decision"])`, and the diamond takes its own: `drop-shadow` on the SVG
+(which follows the alpha channel, so it hugs the outline) and a stroke change on the
+polygon. A selected diamond is marked `.is-selected` so the hover rule cannot paint over
+the selection colour.
+
+> **Trap.** The reader rule was `[data-node-id] > div:first-of-type`. For a diamond that
+> first `div` is the *text overlay* on top of the polygon, not the polygon — so the card
+> shadow rendered as a rectangle floating around the diamond with corners where the shape
+> has none.
+
+> **Trap.** The polygon needs `vectorEffect="non-scaling-stroke"`. The SVG uses
+> `preserveAspectRatio="none"` to stretch a 100×70 viewBox onto the card's real aspect,
+> which stretches the stroke with it and makes the outline visibly thicker on one axis.
+
 ## The reader panel must show everything the card shows
 
 Anything visible on a card has to be reachable in the detail panel, or clicking a step

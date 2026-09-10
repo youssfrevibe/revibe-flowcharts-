@@ -493,7 +493,12 @@ svg {
 [data-chrome="reader"] [data-node-id] {
   transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1), filter 0.18s;
 }
-[data-chrome="reader"] [data-node-id] > div:first-of-type {
+/* Box-shaped emphasis for box-shaped cards only.
+   `> div:first-of-type` is the visible card for a rectangle, a pill or a note — but for
+   a decision it is the *text overlay* sitting on top of an SVG polygon, and the wrapper
+   is roughly twice the diamond's area. So this rule drew a rectangular shadow floating
+   around the diamond, with corners where the shape has none. */
+[data-chrome="reader"] [data-node-id]:not([data-shape="decision"]) > div:first-of-type {
   box-shadow: var(--ui-card-shadow);
   transition: box-shadow 0.18s, border-color 0.18s;
 }
@@ -501,9 +506,30 @@ svg {
   transform: translateY(-2px);
   z-index: 20;
 }
-[data-chrome="reader"] [data-node-id]:hover > div:first-of-type {
+[data-chrome="reader"] [data-node-id]:not([data-shape="decision"]):hover > div:first-of-type {
   box-shadow: var(--ui-dock-shadow);
   border-color: var(--c);
+}
+
+/* The diamond gets the same depth from `drop-shadow`, which follows the alpha channel
+   and therefore the polygon's actual outline, and a thicker stroke on hover. Both are
+   compositor-friendly and neither changes the frozen box the pathways were routed
+   against. */
+[data-shape="decision"] svg {
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.13));
+  transition: filter 0.18s;
+}
+[data-shape="decision"]:hover svg {
+  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.22));
+}
+[data-shape="decision"] polygon {
+  transition: stroke 0.18s, stroke-width 0.18s;
+}
+/* Hover tints the outline; a selected diamond already carries its own stroke from the
+   component, so it must not be overridden back to the actor colour underneath it. */
+[data-shape="decision"]:not(.is-selected):hover polygon {
+  stroke: var(--c);
+  stroke-width: 3.5;
 }
 
 /* Reader cards are for reading. The connection ports are editing affordances and the
