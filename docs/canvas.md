@@ -359,6 +359,25 @@ respected.
 > under `[data-chrome="reader"]` would break that — verified by diffing all 109 boxes
 > and 123 routes across the mode switch.
 
+## The reader panel must show everything the card shows
+
+Anything visible on a card has to be reachable in the detail panel, or clicking a step
+for *more* detail gives you *less*. `agentSteps` — the numbered "Standard procedure" on
+a detailed card — was rendered on the card and in neither tab of the panel; `inputs` and
+`outputs` were in the schema, written by the AI, and rendered nowhere at all.
+
+> **How to check.** Do not read the panel looking for gaps. List the fields of `FlowNode`
+> and `NodeFacts` and grep each one against the card, the Human view and the Claude view;
+> a field the card renders and the panel does not falls straight out of the matrix. The
+> two tabs are scored separately on purpose — a field that only reaches the YAML is not
+> visible to a reader.
+
+A decision renders its outgoing edges as **The branches**, condition first, sorted yes →
+conditional → no, with the incoming edges demoted to "How you got here". For every other
+step the branch is a footnote; for a decision it is the whole content of the step, and a
+condition trailing its destination as a small tag reads as though the destination were
+the point.
+
 ## An empty level must stay reachable
 
 A level with no nodes is still selectable, in both the reader rail and the top bar, and

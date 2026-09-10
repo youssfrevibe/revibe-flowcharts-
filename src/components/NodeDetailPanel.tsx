@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { FactLink, FlowData, FlowNode, Mover } from "@/lib/types";
+import { ConnType, FactLink, FlowData, FlowNode, Mover } from "@/lib/types";
 import { ACTOR_STYLES, actorVars } from "@/lib/node-colors";
 import { childrenOf, levelOf } from "@/lib/levels";
 import ActorIcon from "./ActorIcon";
@@ -27,6 +27,8 @@ export interface NeighbourStep {
   label: string;
   /** Branch label from the connection — "Yes", "missing docs · 130". */
   via?: string;
+  /** The connection's kind, so a yes branch can look different from a no branch. */
+  kind?: ConnType;
 }
 
 interface Props {
@@ -100,6 +102,26 @@ function toClaudeView(node: FlowNode, data: FlowData, doc: FlowData): string {
     }
   }
 
+  // Same fallback the Human view uses, so both tabs list the same destinations for a
+  // node authored before `facts.links` existed.
+  if (!f?.links?.length && node.tools?.length) {
+    L.push("go_to:");
+    for (const t of node.tools) L.push(`  - ${t}`);
+  }
+
+  if (node.inputs) push("needs", node.inputs);
+  if (node.outputs) push("produces", node.outputs);
+  if (node.agentSteps?.length) {
+    L.push("procedure:");
+    node.agentSteps.forEach((st, i) => L.push(`  ${i + 1}. ${st}`));
+  }
+  if (f?.preview) {
+    L.push("sample_rows:");
+    if (f.preview.caption) L.push(`  from: ${f.preview.caption}`);
+    L.push(`  columns: [${f.preview.columns.join(", ")}]`);
+    for (const row of f.preview.rows.slice(0, 5)) L.push(`  - [${row.join(", ")}]`);
+  }
+
   const kids = childrenOf(doc, node);
   if (kids.length) {
     L.push("collapses:");
@@ -162,6 +184,68 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
         {label}
       </span>
       <span className="text-right font-semibold">{children}</span>
+    </div>
+  );
+}
+
+/** Yes / no / conditional, as a colour rather than a word to be read. */
+const BRANCH_TONE: Record<string, { bg: string; fg: string }> = {
+  cyes: { bg: "rgba(5,150,105,0.16)", fg: "var(--rv-success)" },
+  cno: { bg: "rgba(239,68,68,0.16)", fg: "var(--rv-danger)" },
+  camber: { bg: "rgba(245,158,11,0.18)", fg: "var(--rv-warning)" },
+};
+
+/** Sort order for a decision's branches: yes, then no, then everything else, so the
+ *  happy path is always the first thing read. */
+const BRANCH_RANK: Record<string, number> = { cyes: 0, camber: 1, cno: 2 };
+
+/**
+ * A decision's outcomes, condition first.
+ *
+ * For every other kind of step "leads to" is a footnote; for a decision it is the entire
+ * content of the step, and the question is which way you go and why. So the condition
+ * leads the row and the destination follows it, rather than the condition trailing the
+ * destination as a small tag — which read as though the step were the point and the
+ * branch an afterthought.
+ */
+function Branches({
+  steps,
+  onGoTo,
+}: {
+  steps: NeighbourStep[];
+  onGoTo: (id: string) => void;
+}) {
+  const sorted = [...steps].sort(
+    (a, b) => (BRANCH_RANK[a.kind ?? ""] ?? 1.5) - (BRANCH_RANK[b.kind ?? ""] ?? 1.5)
+  );
+  return (
+    <div className="flex flex-col gap-1.5">
+      {sorted.map((s) => {
+        const tone = BRANCH_TONE[s.kind ?? ""];
+        return (
+          <button
+            key={s.id + (s.via ?? "")}
+            onClick={() => onGoTo(s.id)}
+            className="ui-btn flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left"
+            style={{ border: "1px solid var(--ui-border-soft)" }}
+          >
+            <span
+              className="shrink-0 rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-[0.06em]"
+              style={
+                tone
+                  ? { background: tone.bg, color: tone.fg }
+                  : { background: "var(--ui-input)", color: "var(--ui-text-faint)" }
+              }
+            >
+              {s.via || "then"}
+            </span>
+            <span className="truncate text-[12.5px] font-medium">{s.label}</span>
+            <span className="ml-auto shrink-0 opacity-40">
+              <Icon name="link" size={12} />
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -281,6 +365,7 @@ export default function NodeDetailPanel({
   const [tab, setTab] = useState<Tab>("human");
   const actor = node.actor ? ACTOR_STYLES[node.actor] : null;
   const facts = node.facts;
+  const isDecision = node.type === "decision";
   const kids = useMemo(() => childrenOf(doc, node), [doc, node]);
   const yaml = useMemo(
     () => (tab === "claude" ? toClaudeView(node, data, doc) : ""),
@@ -298,10 +383,13 @@ export default function NodeDetailPanel({
     add("Internal stage", node.internalStage || node.stage);
     add("External stage", node.externalStage);
     add("SLA", node.sla);
+    // These two were in the schema, written by the AI, and rendered by nothing at all.
+    add("Needs", node.inputs);
+    add("Produces", node.outputs);
     if (facts?.volume) add(facts.volume.note ? `Volume ${facts.volume.note}` : "Volume", num(facts.volume.value));
     add("Data", facts?.dataRef, true);
     return rows;
-  }, [facts, node.internalStage, node.externalStage, node.stage, node.sla]);
+  }, [facts, node.internalStage, node.externalStage, node.stage, node.sla, node.inputs, node.outputs]);
 
   /** Named destinations. Falls back to `tools`, which older documents use to say the
    *  same thing, so a step authored before `facts.links` existed still shows them. */
@@ -441,6 +529,31 @@ export default function NodeDetailPanel({
               </Section>
             )}
 
+            {/* The numbered procedure the card shows when it is Detailed. It was on the
+                card and in no tab of this panel, so a reader who saw it on the canvas and
+                clicked in for more detail got LESS detail than they started with. */}
+            {node.agentSteps?.length ? (
+              <Section title={`How it is done · ${node.agentSteps.length} steps`}>
+                <ol className="flex flex-col gap-1.5">
+                  {node.agentSteps.map((step, i) => (
+                    <li
+                      key={i}
+                      className="flex items-start gap-2.5 text-[12.5px] leading-relaxed"
+                      style={{ color: "var(--ui-text-dim)" }}
+                    >
+                      <span
+                        className="mt-px grid h-4.5 w-4.5 shrink-0 place-items-center rounded-md text-[10px] font-bold tabular-nums"
+                        style={{ background: "var(--ui-input)", color: "var(--ui-text-faint)" }}
+                      >
+                        {i + 1}
+                      </span>
+                      <span>{step}</span>
+                    </li>
+                  ))}
+                </ol>
+              </Section>
+            ) : null}
+
             {facts?.movers?.length ? (
               <Section title="Who actually moves this stage">
                 <MoverBar movers={facts.movers} />
@@ -464,12 +577,22 @@ export default function NodeDetailPanel({
               </Section>
             )}
 
-            <Section title="Where the flow goes">
+            {/* A decision IS its branches, so they lead rather than trail. Every other
+                kind of step keeps the arrives-from / leads-to signposts. */}
+            {isDecision && outgoing.length > 0 && (
+              <Section title={`The branches · ${outgoing.length}`}>
+                <Branches steps={outgoing} onGoTo={onGoTo} />
+              </Section>
+            )}
+
+            <Section title={isDecision ? "How you got here" : "Where the flow goes"}>
               <Signpost label="Arrives from" steps={incoming} onGoTo={onGoTo} />
-              <Signpost label="Leads to" steps={outgoing} onGoTo={onGoTo} />
-              {!incoming.length && !outgoing.length && (
+              {!isDecision && <Signpost label="Leads to" steps={outgoing} onGoTo={onGoTo} />}
+              {!incoming.length && (isDecision || !outgoing.length) && (
                 <p className="text-[12px]" style={{ color: "var(--ui-text-faint)" }}>
-                  Nothing connects to this step yet.
+                  {isDecision
+                    ? "Nothing reaches this decision yet."
+                    : "Nothing connects to this step yet."}
                 </p>
               )}
             </Section>

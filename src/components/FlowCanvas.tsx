@@ -3204,14 +3204,21 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const neighbours = useMemo(() => {
     if (!detailNode) return { incoming: [], outgoing: [] };
     const byId = new Map(view.nodes.map((n) => [n.id, n]));
-    const step = (id: string, via?: string) => ({
+    const step = (id: string, via?: string, kind?: ConnType) => ({
       id,
       label: byId.get(id)?.label ?? id,
       via: via || undefined,
+      // The branch's yes/no/maybe kind, so a decision's outcomes can be told apart at a
+      // glance rather than by reading each label.
+      kind: kind || undefined,
     });
     return {
-      incoming: view.connections.filter((c) => c.to === detailNode.id).map((c) => step(c.from, c.label)),
-      outgoing: view.connections.filter((c) => c.from === detailNode.id).map((c) => step(c.to, c.label)),
+      incoming: view.connections
+        .filter((c) => c.to === detailNode.id)
+        .map((c) => step(c.from, c.label, c.type)),
+      outgoing: view.connections
+        .filter((c) => c.from === detailNode.id)
+        .map((c) => step(c.to, c.label, c.type)),
     };
   }, [detailNode, view]);
 
@@ -3461,7 +3468,10 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
             />
           )}
 
-          {loaded && (
+          {/* Editor only. The reader navigates by the level rail, the guided tour and
+              clicking through the flow; a second, tinier copy of the diagram in the
+              corner is one more thing to decode and it covers the canvas it describes. */}
+          {loaded && mode !== "view" && (
             <Minimap
               nodes={view.nodes}
               sizes={sizes}
