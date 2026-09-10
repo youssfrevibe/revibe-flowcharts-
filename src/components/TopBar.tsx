@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Collaborator, DetailLevel } from "@/lib/types";
 import { LEVEL_LABELS } from "@/lib/levels";
 import ThemeToggle from "./ThemeToggle";
+import Icon, { IconName } from "./Icon";
 
 interface Props {
   title: string;
@@ -128,7 +129,7 @@ function MenuItem({
   children: React.ReactNode;
   danger?: boolean;
   hint?: string;
-  icon?: string;
+  icon?: IconName;
 }) {
   return (
     <button
@@ -139,7 +140,11 @@ function MenuItem({
       }`}
     >
       <div className="flex items-center gap-2">
-        {icon && <span className="text-xs">{icon}</span>}
+        {icon && (
+          <span style={{ color: "var(--ui-text-faint)" }}>
+            <Icon name={icon} size={14} />
+          </span>
+        )}
         <span>{children}</span>
       </div>
       {hint && (
@@ -386,7 +391,7 @@ export default function TopBar(p: Props) {
             p.viewMode === "detailed" ? "text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/40" : ""
           }`}
         >
-          <span className="text-xs">{p.viewMode === "detailed" ? "📋" : "▫️"}</span>
+          <Icon name="layout" size={14} />
           <span className="hidden sm:inline">{p.viewMode === "detailed" ? "Detailed" : "Compact"}</span>
         </button>
 
@@ -434,7 +439,7 @@ export default function TopBar(p: Props) {
             className="flex items-center gap-1.5 h-7.5 px-3 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white text-[11.5px] font-semibold rounded-lg shadow-sm transition-all active:scale-95"
             title="Generate or edit flowchart with AI"
           >
-            <span>✨</span>
+            <Icon name="sparkle" size={14} />
             <span className="hidden sm:inline">AI Assist</span>
           </button>
         )}
@@ -450,7 +455,7 @@ export default function TopBar(p: Props) {
           }`}
           title="Copy link to collaborate in real time"
         >
-          <span>{p.shareCopied ? "✓" : "🔗"}</span>
+          {p.shareCopied ? <span>✓</span> : <Icon name="link" size={14} />}
           <span className="hidden sm:inline">{p.shareCopied ? "Copied Link" : "Share"}</span>
         </button>
 
@@ -466,7 +471,7 @@ export default function TopBar(p: Props) {
           {(close) => (
             <>
               <MenuItem
-                icon="🖼"
+                icon="image"
                 onClick={() => {
                   close();
                   p.onExportPNG();
@@ -475,7 +480,7 @@ export default function TopBar(p: Props) {
                 Export High-Res PNG
               </MenuItem>
               <MenuItem
-                icon="📐"
+                icon="vector"
                 onClick={() => {
                   close();
                   p.onExportSVG();
@@ -484,7 +489,7 @@ export default function TopBar(p: Props) {
                 Export Vector SVG
               </MenuItem>
               <MenuItem
-                icon="💾"
+                icon="save"
                 onClick={() => {
                   close();
                   p.onExportJSON();
@@ -495,7 +500,7 @@ export default function TopBar(p: Props) {
               </MenuItem>
               {!p.readOnly && (
                 <MenuItem
-                  icon="📂"
+                  icon="folder"
                   onClick={() => {
                     close();
                     p.onImport();
@@ -506,7 +511,7 @@ export default function TopBar(p: Props) {
               )}
               <MenuSep />
               <MenuItem
-                icon="🕒"
+                icon="clock"
                 onClick={() => {
                   close();
                   p.onHistory();
@@ -516,7 +521,7 @@ export default function TopBar(p: Props) {
               </MenuItem>
               {!p.readOnly && (
                 <MenuItem
-                  icon="📋"
+                  icon="clipboard"
                   onClick={() => {
                     close();
                     p.onHandover();
@@ -526,7 +531,7 @@ export default function TopBar(p: Props) {
                 </MenuItem>
               )}
               <MenuItem
-                icon="⌨️"
+                icon="keyboard"
                 onClick={() => {
                   close();
                   p.onShortcuts();
@@ -539,7 +544,7 @@ export default function TopBar(p: Props) {
                 <>
                   <MenuSep />
                   <MenuItem
-                    icon="↺"
+                    icon="reset"
                     danger
                     onClick={() => {
                       close();

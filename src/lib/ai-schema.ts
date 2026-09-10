@@ -36,8 +36,10 @@ const FIELD_REFERENCE = `NODE FIELDS (all optional except type/label):
   - "note" = an annotation/comment (use sparingly).
 - "label": concise, a few words. This is the card's headline.
 - "detail": longer explanation of what happens at this step.
-- "actor": who performs the step — ${list(ACTORS)}. "revibe" = our team, "seller" = seller/supplier,
-  "system" = automated, "carrier" = third party/carrier/lab. Set this whenever it is knowable.
+- "actor": who performs the step — ${list(ACTORS)}. "customer" = the customer themselves,
+  "revibe" = our team, "seller" = seller/supplier, "system" = automated,
+  "carrier" = courier/shipping partner, "lab" = lab/Naif inspection and QC.
+  Set this whenever it is knowable.
 - "internalStage": the OMS column \`return_claim_stage\` — the stage the team tracks internally
   (e.g. "Pending LAB collection", "Invalid claim", "Under revision"). Free text.
 - "externalStage": the OMS column \`stage\` — the stage shown to the customer

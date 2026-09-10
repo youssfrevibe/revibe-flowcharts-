@@ -4,6 +4,7 @@ import { FlowNode, NodeType, Port } from "@/lib/types";
 import { getNodeStyle, ACTOR_STYLES, actorVars } from "@/lib/node-colors";
 import React, { useRef, useCallback, useState, useEffect } from "react";
 import ActorIcon from "./ActorIcon";
+import Icon from "./Icon";
 
 export const TYPE_LABELS: Record<NodeType, string> = {
   start: "Start",
@@ -416,7 +417,7 @@ function FlowNodeCard({
           {/* Header Bar */}
           <div className="flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-black/10 dark:border-white/10 text-[10.5px] font-semibold opacity-90">
             <span className="flex items-center gap-1">
-              <span>📌</span>
+              <Icon name="pin" size={11} />
               <span>Comment</span>
             </span>
             {onDelete && (

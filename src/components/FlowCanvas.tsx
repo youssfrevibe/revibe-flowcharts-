@@ -598,26 +598,35 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       // older document back in the database. Chaining removes the race; the `seq` check
       // then drops any save that a newer one has already superseded, since that newer
       // save reads `dataRef.current` and therefore writes everything this one would.
-      saveChainRef.current = saveChainRef.current.then(async () => {
-        if (seq !== saveSeqRef.current) return;
-        // Read through refs, not the closure: this fires long after the render that
-        // scheduled it, and a rename in between must not be written back stale. Keeping
-        // the deps at [slug] also makes this stable, which matters because `commit`
-        // depends on it and roughly thirty handlers depend on `commit`.
-        const meta = titleKnownRef.current
-          ? { title: titleRef.current, description: subtitleRef.current }
-          : undefined; // unknown name → save the document only, leave metadata untouched
-        const ok = await saveToCloud(slug, dataRef.current, meta);
-        // Only the newest save owns the indicator, or a slow failure would show
-        // "offline" over a later success.
-        if (seq === saveSeqRef.current) setSaveStatus(ok ? "saved" : "offline");
-        // Auto-snapshot at most once every 3 minutes of active editing.
-        const SNAP_INTERVAL = 180_000;
-        if (ok && Date.now() - lastSnapshotRef.current > SNAP_INTERVAL) {
-          lastSnapshotRef.current = Date.now();
-          void saveVersion(slug, dataRef.current, { author: userRef.current?.name });
-        }
-      });
+      // `.catch` is load-bearing, not defensive noise. A promise chain that rejects
+      // stays rejected: every later `.then(cb)` skips `cb` and passes the rejection on,
+      // so one throw anywhere in here would silently stop this tab saving for the rest
+      // of the session, with the indicator still reading "saving". Swallow it, report
+      // offline, and hand the next save a resolved promise to build on.
+      saveChainRef.current = saveChainRef.current
+        .then(async () => {
+          if (seq !== saveSeqRef.current) return;
+          // Read through refs, not the closure: this fires long after the render that
+          // scheduled it, and a rename in between must not be written back stale. Keeping
+          // the deps at [slug] also makes this stable, which matters because `commit`
+          // depends on it and roughly thirty handlers depend on `commit`.
+          const meta = titleKnownRef.current
+            ? { title: titleRef.current, description: subtitleRef.current }
+            : undefined; // unknown name → save the document only, leave metadata untouched
+          const ok = await saveToCloud(slug, dataRef.current, meta);
+          // Only the newest save owns the indicator, or a slow failure would show
+          // "offline" over a later success.
+          if (seq === saveSeqRef.current) setSaveStatus(ok ? "saved" : "offline");
+          // Auto-snapshot at most once every 3 minutes of active editing.
+          const SNAP_INTERVAL = 180_000;
+          if (ok && Date.now() - lastSnapshotRef.current > SNAP_INTERVAL) {
+            lastSnapshotRef.current = Date.now();
+            void saveVersion(slug, dataRef.current, { author: userRef.current?.name });
+          }
+        })
+        .catch(() => {
+          if (seq === saveSeqRef.current) setSaveStatus("offline");
+        });
     }, 650);
   }, [slug]);
 

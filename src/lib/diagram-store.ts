@@ -1,4 +1,12 @@
-import { Actor, DiagramMetadata, FlowData, FlowNode, NodeType } from "./types";
+import {
+  ACTOR_IDS,
+  Actor,
+  DiagramMetadata,
+  FlowData,
+  FlowNode,
+  NODE_TYPE_IDS,
+  NodeType,
+} from "./types";
 import { DEFAULT_LEVEL } from "./levels";
 import { getInitialNodes, getInitialConnections } from "./initial-data";
 import { getKBNodes, getKBConnections } from "./kb-data";
@@ -140,15 +148,8 @@ const ACTOR_ALIASES: Record<string, Actor> = {
   team: "revibe",
 };
 
-const VALID_TYPES = new Set<string>(["start", "step", "decision", "sub", "ok", "fail", "note"]);
-const VALID_ACTORS = new Set<string>([
-  "customer",
-  "revibe",
-  "seller",
-  "system",
-  "carrier",
-  "lab",
-]);
+const VALID_TYPES = new Set<string>(NODE_TYPE_IDS);
+const VALID_ACTORS = new Set<string>(ACTOR_IDS);
 
 /** Bring an imported node onto the schema the renderer actually understands. */
 function coerceNodeShape(node: FlowNode): FlowNode {

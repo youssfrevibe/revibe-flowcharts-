@@ -1,4 +1,13 @@
-export type NodeType = "start" | "step" | "decision" | "sub" | "ok" | "fail" | "note";
+/**
+ * The two closed vocabularies live here, as arrays, and their types are derived from
+ * them — so there is exactly one list to edit and it cannot silently disagree with
+ * itself. There used to be four separate copies of the actor list (this type, the
+ * palette, the AI schema's validator, and the importer's allow-list), and adding a role
+ * updated three of them: the AI validator kept stripping the new actor out of every
+ * generated flowchart because its copy had not been touched.
+ */
+export const NODE_TYPE_IDS = ["start", "step", "decision", "sub", "ok", "fail", "note"] as const;
+export type NodeType = (typeof NODE_TYPE_IDS)[number];
 
 export type TextPosition = "inside" | "top" | "bottom" | "left" | "right";
 export type TextAlign = "left" | "center" | "right";
@@ -27,7 +36,8 @@ export type DetailLevel = 1 | 2 | 3;
  *   carrier  → Courier / shipping partner (grey)
  *   lab      → Lab / Naif — inspection and QC (pink)
  */
-export type Actor = "customer" | "revibe" | "seller" | "system" | "carrier" | "lab";
+export const ACTOR_IDS = ["customer", "revibe", "seller", "system", "carrier", "lab"] as const;
+export type Actor = (typeof ACTOR_IDS)[number];
 
 /**
  * @deprecated Kept for backwards-compatibility with the old two-button picker. New nodes

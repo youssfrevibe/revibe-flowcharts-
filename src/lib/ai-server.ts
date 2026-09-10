@@ -1,3 +1,5 @@
+import { ACTOR_IDS, NODE_TYPE_IDS } from "./types";
+
 /**
  * Server-side Gemini plumbing shared by the AI routes.
  *
@@ -6,9 +8,10 @@
  * environment is the fallback. Keys are never logged or persisted.
  */
 
-export const NODE_TYPES = ["start", "step", "decision", "sub", "ok", "fail", "note"] as const;
+// Derived, never restated — see the note on NODE_TYPE_IDS in types.ts.
+export const NODE_TYPES = NODE_TYPE_IDS;
 export const CONN_TYPES = ["", "cyes", "cno", "camber"] as const;
-export const ACTORS = ["revibe", "seller", "system", "carrier"] as const;
+export const ACTORS = ACTOR_IDS;
 export const TEXT_POSITIONS = ["inside", "top", "bottom", "left", "right"] as const;
 export const TEXT_ALIGNS = ["left", "center", "right"] as const;
 export const TEXT_SIZES = ["sm", "base", "lg"] as const;

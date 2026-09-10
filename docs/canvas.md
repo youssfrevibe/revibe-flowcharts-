@@ -264,9 +264,24 @@ globals.css resolve the light or dark pair themselves.
 > background with `accent` as the text — so an actor pill on a light card was a dark wash
 > under a pale label. Always go through `actorVars` + the class.
 
-Icons are SVG (`components/ActorIcon.tsx`), not emoji. Emoji render differently on every
-platform, cannot take the actor's colour, sit off the text baseline, and are announced by
-their Unicode name rather than the role.
+Icons are SVG — `components/ActorIcon.tsx` for roles, `components/Icon.tsx` for UI
+glyphs. Emoji render differently on every platform, cannot take the actor's colour, sit
+off the text baseline, and are announced by their Unicode name rather than by what the
+control does. Purely geometric glyphs (`✓ ✕ ◆ → ⌘`) are not emoji and stay as text: they
+are single-colour, consistent across platforms, and already take `currentColor`.
+
+`MenuItem`'s `icon` prop is typed `IconName`, not `string`. That is deliberate — when the
+type went in, the compiler immediately found five more emoji menu items nobody had
+noticed.
+
+**The closed vocabularies have one definition each.** `NODE_TYPE_IDS` and `ACTOR_IDS` in
+`lib/types.ts` are arrays, and `NodeType` / `Actor` are derived from them.
+
+> **Trap.** There used to be four copies of the actor list — the type, the palette, the
+> AI schema's validator and the importer's allow-list — and adding the two new roles
+> updated three. The fourth, `ACTORS` in `ai-server.ts`, is what `sanitizeNodePatch`
+> validates against, so every AI-generated flowchart silently had the new actors stripped
+> back out. Derive, never restate.
 
 **Dark mode is neutral; colour is reserved for accents.** Card surfaces, the reader
 chrome and the row washes are greys — a decision card used to be `#221046`, a violet

@@ -51,6 +51,12 @@ export default function LevelSidebar({
     return m;
   }, [view.nodes]);
 
+  /** Only the roles this level actually uses. */
+  const shownActors = useMemo(
+    () => ACTOR_ORDER.filter((a) => (actorCounts.get(a) ?? 0) > 0),
+    [actorCounts]
+  );
+
   /** Where the process can end: explicit outcome nodes, plus any step nothing leaves.
    *  A dead end that is not marked as an outcome is usually the interesting one. */
   const outcomes = useMemo(() => {
@@ -128,14 +134,22 @@ export default function LevelSidebar({
       <div className="px-4 pt-6">
         <h2 className="ui-section mb-2 uppercase">Who is involved</h2>
         <div className="flex flex-col">
-          {ACTOR_ORDER.map((a) => {
+          {/* Roles nobody holds are hidden once anybody holds one — six rows of "0" is
+              not a legend, it is noise. A diagram with no owners at all says so instead,
+              because then the empty list would look like a rendering failure. */}
+          {shownActors.length === 0 && (
+            <p className="py-1 text-[11.5px]" style={{ color: "var(--ui-text-faint)" }}>
+              No owners assigned yet.
+            </p>
+          )}
+          {shownActors.map((a) => {
             const c = actorCounts.get(a) ?? 0;
             const st = ACTOR_STYLES[a];
             return (
               <div
                 key={a}
                 className="flex items-center gap-2.5 py-1.5 text-[12px]"
-                style={{ ...actorVars(st), opacity: c ? 1 : 0.45 }}
+                style={actorVars(st)}
               >
                 <span className="actor-chip grid h-6 w-6 shrink-0 place-items-center rounded-[7px]">
                   <ActorIcon actor={a} size={14} />

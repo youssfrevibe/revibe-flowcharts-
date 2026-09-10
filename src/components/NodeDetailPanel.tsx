@@ -5,6 +5,7 @@ import { FactLink, FlowData, FlowNode, Mover } from "@/lib/types";
 import { ACTOR_STYLES, actorVars } from "@/lib/node-colors";
 import { childrenOf, levelOf } from "@/lib/levels";
 import ActorIcon from "./ActorIcon";
+import Icon, { IconName } from "./Icon";
 
 /**
  * The reader's view of one step.
@@ -134,12 +135,13 @@ const TYPE_LABEL: Record<string, string> = {
   note: "Note",
 };
 
-const LINK_ICON: Record<string, string> = {
-  dashboard: "📊",
-  tool: "🔧",
-  doc: "📄",
-  query: "🔎",
-  link: "↗",
+/** A link's `kind` picks its glyph. Unknown kinds fall back to a plain link. */
+const LINK_ICON: Record<string, IconName> = {
+  dashboard: "dashboard",
+  tool: "tool",
+  doc: "doc",
+  query: "query",
+  link: "link",
 };
 
 /**
@@ -350,8 +352,8 @@ export default function NodeDetailPanel({
               className="ui-btn flex-1 py-1.5 text-[12px] font-semibold"
               style={tab === t ? { background: "var(--ui-panel)", color: "var(--ui-text)" } : undefined}
             >
-              <span aria-hidden className="mr-1.5 opacity-70">
-                {t === "human" ? "👤" : "</>"}
+              <span className="mr-1.5 opacity-70">
+                <Icon name={t === "human" ? "person" : "code"} size={13} />
               </span>
               {t === "human" ? "Human view" : "Claude view"}
             </button>
@@ -406,8 +408,8 @@ export default function NodeDetailPanel({
                     const glyph = LINK_ICON[l.kind ?? "link"] ?? LINK_ICON.link;
                     const inner = (
                       <>
-                        <span aria-hidden className="shrink-0 opacity-80">
-                          {glyph}
+                        <span className="shrink-0 opacity-70">
+                          <Icon name={glyph} size={14} />
                         </span>
                         <span className="truncate">{l.label}</span>
                       </>
