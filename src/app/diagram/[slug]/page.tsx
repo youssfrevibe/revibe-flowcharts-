@@ -34,8 +34,11 @@ export default function DynamicDiagramPage({ params }: { params: Promise<{ slug:
   return (
     <FlowCanvas
       slug={slug}
-      title={meta?.title || "Process Flowchart"}
-      subtitle={meta?.description || "Interactive process editor"}
+      // Left undefined until the lookup resolves, deliberately. FlowCanvas shows a
+      // placeholder for an undefined title but will not SAVE one, so a slow or failed
+      // gallery fetch can no longer rename the diagram to "Process Flowchart".
+      title={meta?.title}
+      subtitle={meta?.description}
       exportFilename={slug}
       readOnly={readOnly}
     />

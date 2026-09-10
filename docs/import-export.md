@@ -27,6 +27,14 @@ would otherwise render as lines into empty space. If `connections` is missing
 entirely and there is more than one node, a linear chain is synthesised in
 reading order so the import is at least navigable.
 
+### Connection ids are assigned before the commit
+
+`loadParsedJSON` runs imported connections through `backfillConnIds` **before**
+committing, so the `doc.replace` carries the same ids the local copy holds. Without it
+the importer fell back to `from__to` locally while each peer generated its own, and
+dragging an endpoint afterwards duplicated the pathway on every peer instead of moving
+it.
+
 ### Coordinates are not trusted
 
 Source coordinates are saved as-is and **re-arranged on first open**, not at import

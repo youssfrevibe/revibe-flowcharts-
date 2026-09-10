@@ -44,6 +44,26 @@ identity is what makes peers converge. Two rules follow:
 Prefer a granular op over `doc.replace`. `doc.replace` clobbers whatever the other
 person was doing.
 
+### One message per batch
+
+`broadcast` takes `Op | Op[]` and sends a **batch as a single message**, payload
+`{ ops: [...] }`. It used to send one message per op, so capturing geometry on a
+109-node diagram fired 109 sends in a tick — as did deleting, duplicating or
+recolouring a large selection. Realtime rate-limits per client and drops the
+overflow, and a dropped op is a *silent* divergence: the two documents stop matching
+with nothing on screen to say so. Batches are still split by serialised size, since
+one oversized message also drops in full.
+
+The receiver accepts both shapes (bare op, and `{ ops }`) so a tab left open across a
+deploy still understands its peers. Ops in a batch are applied in order, each against
+the result of the last, because `applyRemote` advances `dataRef.current` as it goes.
+
+> **Trap.** `commit(producer, ops)` evaluates `ops` **before** it runs `producer`. A
+> call site that fills its array *inside* the producer must therefore pass the array
+> **reference** — `ops` — and never `ops.map(...)`, which snapshots it while it is
+> still empty. `setNodePathwaysBold` did exactly that and broadcast an empty batch, so
+> bolding a pathway worked locally and never reached anybody else.
+
 ## Conflict model
 
 Last write wins, per op. There is no CRDT and no OT. Two people editing different
@@ -63,6 +83,9 @@ as a "bug".
 ## Channel lifecycle
 
 One channel per slug: `flowchart:<slug>`, `broadcast: { self: false }`. Status is
-`connecting` / `live` / `offline`. Presence is tracked on subscribe and untracked on
+`connecting` / `live` / `offline`, and a send that comes back anything other than `ok`
+now sets `offline` — the result used to be discarded, so a rejected or rate-limited
+broadcast looked exactly like a delivered one while peers silently fell behind.
+Presence excludes the local user, who is not their own collaborator. Presence is tracked on subscribe and untracked on
 cleanup. The `onRemoteOp` callback is held in a ref so a changing handler does not
 force a resubscribe — keep it that way; resubscribing on every render drops presence.

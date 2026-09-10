@@ -284,7 +284,7 @@ respected.
 > under `[data-chrome="reader"]` would break that — verified by diffing all 109 boxes
 > and 123 routes across the mode switch.
 
-## Two rules the level model depends on
+## Three rules the level model depends on
 
 **1. Anything acting on "all nodes" goes through `currentScope()`.** Levels share one
 world coordinate space — `applyLevelPlan` parks new tiers near the origin and auto-layout
@@ -307,10 +307,25 @@ the source node, so duplicate, paste and alt-drag all cloned `children` verbatim
 two summary cards claiming the same steps; `parentOf` then resolved drill-up to whichever
 came first in array order.
 
+**3. Every path that creates a node or connection stamps `level: levelRef.current`.**
+`addNode`, `handleQuickAdd`, `chainSelectedNodes`, `autoConnectAllNodes` and the
+alt-drag connect all do. `paste` did not: it spread the clipboard, which carries the
+level the nodes were *copied from*, so pasting into a different level saved and
+broadcast nodes that were invisible here — and then selected them, so the next Delete
+removed cards nobody could see. Connections are level-filtered too, so stamping only the
+nodes pastes cards with no arrows.
+
 > **Trap.** Selection does not survive a level change — it is cleared, because ids from a
-> level you left would let Delete or an arrow key act on nodes you cannot see. Anything
-> that switches level *and* selects (drill-down) must select **after** the switch, or the
-> reset wipes it.
+> level you left would let Delete or an arrow key act on nodes you cannot see. The same
+> effect ends any running guided tour, since its index refers to that level's step list.
+> Anything that switches level *and* selects (drill-down) must select **after** the
+> switch, or the reset wipes it.
+
+> **Trap.** Anything resolving `children` needs the **whole document**, not the level
+> view: a level-1 node's children are level-2 nodes, which `atLevel` has by definition
+> filtered out. `NodeDetailPanel` took only the view, so `childrenOf` always returned
+> nothing and "What this collapses" — the entire reader drill-down — never rendered on
+> any node. It now takes `doc` alongside `data` for exactly this.
 
 ## The opening frame
 
@@ -320,6 +335,26 @@ process. Explicit Fit (Shift+1, the toolbar button) still does true fit.
 
 `READABLE_ZOOM` is derived, not taste: a card title is 13.5px and text below roughly
 11px stops being comfortably readable, so `13.5 × z ≥ 11` gives `z ≥ 0.81`.
+
+**Never frame against an unmeasured canvas.** `computeFit` and `frameForReading` both
+go through `whenCanvasSized`, which waits for a viewport rectangle with actual area and
+retries across frames; `pendingFrameRef` re-runs the frame if the canvas only gains a
+size later (a background tab, a collapsed pane).
+
+> **Trap.** `getBoundingClientRect()` on a not-yet-laid-out flex child returns 0×0, and
+> nothing checked. The damage looked like two unrelated bugs: `computeFit` divided by
+> zero, went negative and clamped to its `0.05` floor — the 5% opening — while
+> `frameForReading` centred on `0 / 2` and parked the first step in the top-left corner,
+> half of it behind the rail. Measured on the return-claims map: `start_claim` landed at
+> exactly (canvasLeft − w/2, canvasTop − h/2), which is the signature of a zero rect.
+
+**Changing level re-frames.** The levels share one coordinate space — that is what keeps
+a pathway where the editor put it — but they occupy different regions of it, so leaving
+the camera alone showed a blank canvas. Measured: clicking "The shape" on the
+return-claims map left all seven steps off screen, and an explicit Fit then gave **23%**,
+because those seven steps are spread across the full width of the 109-step layout. It
+re-frames through `frameForReading`, deferred a beat so the incoming level's cards have
+mounted and been measured.
 
 > **Why.** Fit-to-view is the wrong goal for a large map. Measured on the 109-node
 > return-claims document, fit chose **0.05** — cards rendered **12×8px**, titles at

@@ -7,13 +7,16 @@ import { atLevel, populatedLevels, mergeNodes, mergeConnections, levelOf, tourOr
 import {
   getDefaultData,
   getCachedData,
-  fetchCloudData,
+  readCloudDoc,
   saveToCloud,
   resetToDefault,
   generateNodeId,
   updateDiagramMetadata,
+  getUnsaved,
+  clearUnsaved,
+  type UnsavedWork,
 } from "@/lib/diagram-store";
-import { applyOp, connId, newConnId } from "@/lib/ops";
+import { applyOp, backfillConnIds, connId, newConnId } from "@/lib/ops";
 import { computeBounds, autoLayout, resolveOverlaps, sizeOf, effectiveSizes, Size } from "@/lib/graph";
 import { LayoutPrefs, loadLayoutPrefs, saveLayoutPrefs, DEFAULT_PREFS } from "@/lib/layout-prefs";
 import { buildDiagramSVG } from "@/lib/export-svg";
@@ -53,10 +56,17 @@ const CULL_THRESHOLD = 150;
 /** Screen-pixel halo around the viewport, so nothing pops in at the edges while panning. */
 const CULL_MARGIN = 800;
 
+/** Shown while the gallery lookup is still in flight. Display only — never saved.
+ *  See `titleKnownRef`. */
+const PLACEHOLDER_TITLE = "Process Flowchart";
+const PLACEHOLDER_SUBTITLE = "Interactive process editor";
+
 interface FlowCanvasProps {
   slug: string;
-  title: string;
-  subtitle: string;
+  /** Undefined until the gallery lookup resolves. A placeholder is shown for an
+   *  undefined title, but never written back — see `titleKnownRef`. */
+  title?: string;
+  subtitle?: string;
   exportFilename?: string;
   /** View-only mode: navigation works, editing is disabled. */
   readOnly?: boolean;
@@ -69,6 +79,33 @@ interface FlowCanvasProps {
  * Measured on the 109-node return-claims map, fit-to-view chose 0.05, which renders a
  * card at 12x8px and its title at 0.7px. */
 const READABLE_ZOOM = 0.82;
+
+/**
+ * Run `fn` once the canvas element has a real size, retrying across frames until it has.
+ *
+ * Every framing calculation divides by the viewport rectangle, and `getBoundingClientRect`
+ * on a not-yet-laid-out flex child returns 0x0 — which no caller checked. The damage was
+ * silent and looked like two unrelated bugs: `computeFit` got a negative zoom and clamped
+ * to its 0.05 floor (the 5% opening with 12x8px cards), while `frameForReading` centred on
+ * `0/2` and parked the first step in the top-left corner, half of it behind the rail.
+ * Measured on the return-claims map: start_claim landed at exactly (canvasLeft - w/2,
+ * canvasTop - h/2), the signature of a zero rect.
+ *
+ * Bounded so a hidden or unmounted canvas cannot spin forever.
+ */
+function whenCanvasSized(
+  getEl: () => HTMLElement | null,
+  fn: (r: DOMRect) => void,
+  tries = 30
+): void {
+  const r = getEl()?.getBoundingClientRect();
+  if (r && r.width > 0 && r.height > 0) {
+    fn(r);
+    return;
+  }
+  if (tries <= 0) return;
+  requestAnimationFrame(() => whenCanvasSized(getEl, fn, tries - 1));
+}
 
 const GRID = 16;
 const snapVal = (v: number, on: boolean) => (on ? Math.round(v / GRID) * GRID : Math.round(v));
@@ -141,6 +178,10 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   // at level 3 alone — hence that default, and hence `availableLevels`: offering an empty
   // "The shape" would just look like the app was broken.
   const [level, setLevel] = useState<DetailLevel>(DEFAULT_LEVEL);
+  /** How far through the guided tour the reader is, or null when no tour is running.
+   *  Declared here rather than with the rest of the tour code because switching `level`
+   *  resets it, and that effect is defined long before the tour section. */
+  const [tourIndex, setTourIndex] = useState<number | null>(null);
   const availableLevels = useMemo(() => populatedLevels(data), [data]);
   // Strictly what gets rendered, routed and fitted. Every mutation still runs against the
   // whole document through `dataRef` / `commit`, so editing at one level can never drop
@@ -202,6 +243,14 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const [ghost, setGhost] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [labelEdit, setLabelEdit] = useState<{ id: string; sx: number; sy: number; value: string } | null>(null);
   const [viewport, setViewport] = useState({ w: 0, h: 0, left: 0, top: 0 });
+  /** An opening frame that has been asked for but not yet applied against a real
+   *  viewport. A diagram opened in a background tab, behind a collapsed pane, or before
+   *  layout settles has a 0x0 canvas for as long as that lasts — longer than any retry
+   *  worth spinning — so the frame is re-attempted when the canvas gains a size. */
+  const pendingFrameRef = useRef(false);
+  /** Work from a previous session that never reached the server. Offered back rather
+   *  than applied: silently choosing either copy is how someone loses an afternoon. */
+  const [unsaved, setUnsaved] = useState<UnsavedWork | null>(null);
   const [arranging, setArranging] = useState(false);
   // `loaded` flips true as soon as the local cache paints, which is BEFORE the cloud copy
   // lands and replaces it. Anything that rewrites the document on open has to wait for this
@@ -276,13 +325,18 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   // other hadn't written yet, and the second one's preference was lost.
   useEffect(() => {
     if (!panelsLoaded) return;
+    // Reader mode force-opens both rails through this same state, so persisting while it
+    // is on wrote *its* layout over the editor preference — open a diagram once as a
+    // reader and your editor rails were both open forever after. Reader chrome is a
+    // property of the mode, not a choice the user made.
+    if (mode === "view") return;
     try {
       localStorage.setItem(
         "flow_panels",
         JSON.stringify({ left: showLeft, right: showRight, zoomOnScroll })
       );
     } catch {}
-  }, [panelsLoaded, showLeft, showRight, zoomOnScroll]);
+  }, [panelsLoaded, showLeft, showRight, zoomOnScroll, mode]);
 
   const togglePanel = useCallback((side: "left" | "right") => {
     if (side === "left") setShowLeft((v) => !v);
@@ -360,11 +414,28 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
    *  re-subscribing every time the framing callback is rebuilt. */
   const frameRef = useRef<() => void>(() => {});
 
-  const [projectTitle, setProjectTitle] = useState(title);
-  const [projectSubtitle, setProjectSubtitle] = useState(subtitle);
+  const [projectTitle, setProjectTitle] = useState(title ?? PLACEHOLDER_TITLE);
+  const [projectSubtitle, setProjectSubtitle] = useState(subtitle ?? PLACEHOLDER_SUBTITLE);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const [tempTitle, setTempTitle] = useState(title);
-  const [tempSubtitle, setTempSubtitle] = useState(subtitle);
+  const [tempTitle, setTempTitle] = useState(title ?? PLACEHOLDER_TITLE);
+  const [tempSubtitle, setTempSubtitle] = useState(subtitle ?? PLACEHOLDER_SUBTITLE);
+
+  /**
+   * Whether the name on screen is the diagram's real name or just the placeholder.
+   *
+   * Only a real name is ever saved. The autosave used to send `projectTitle`
+   * unconditionally, so a diagram whose metadata had not loaded yet was renamed to
+   * "Process Flowchart" by the user's first edit — and a rename made through PATCH was
+   * reverted by the next autosave 650ms later, because that autosave's closure still
+   * held the title from before the rename.
+   */
+  const titleKnownRef = useRef(title !== undefined);
+  /** Current title/subtitle for the debounced save, which fires long after the render
+   *  that scheduled it and must not use that render's values. */
+  const titleRef = useRef(projectTitle);
+  const subtitleRef = useRef(projectSubtitle);
+  titleRef.current = projectTitle;
+  subtitleRef.current = projectSubtitle;
 
   // Any open dialog owns the keyboard. Without this, typing in a modal that hasn't focused
   // an input yet — or just having one open — still fired canvas shortcuts underneath it,
@@ -376,11 +447,14 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
 
 
   useEffect(() => {
+    if (title === undefined) return; // not resolved yet — keep showing the placeholder
+    titleKnownRef.current = true;
     setProjectTitle(title);
     setTempTitle(title);
   }, [title]);
 
   useEffect(() => {
+    if (subtitle === undefined) return;
     setProjectSubtitle(subtitle);
     setTempSubtitle(subtitle);
   }, [subtitle]);
@@ -398,7 +472,24 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   }, []);
 
   /* --------------------------- realtime sync --------------------------- */
+  /**
+   * Ops that arrived while the cloud read was still in flight.
+   *
+   * The realtime channel subscribes immediately, but the document takes a round trip to
+   * arrive. An op applied to the cache in that window was then thrown away wholesale
+   * when the cloud copy replaced `data` — so an edit a collaborator made during those
+   * few hundred milliseconds vanished from this tab and stayed missing until a reload.
+   * Buffer them instead and replay onto the copy that lands.
+   *
+   * Replay is safe because every op is an idempotent state-setter: an upsert replaces or
+   * inserts, a delete is a no-op the second time, and a move or waypoint op skips ids the
+   * document does not have.
+   */
+  const docReadyRef = useRef(false);
+  const pendingRemoteRef = useRef<Op[]>([]);
+
   const applyRemote = useCallback((op: Op) => {
+    if (!docReadyRef.current) pendingRemoteRef.current.push(op);
     const next = applyOp(dataRef.current, op);
     dataRef.current = next;
     setData(next);
@@ -414,7 +505,10 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   });
   const bc = useCallback(
     (op: Op | Op[]) => {
-      (Array.isArray(op) ? op : [op]).forEach(broadcast);
+      // One message for the whole batch — `broadcast` splits it only if it is too large
+      // to send in one piece. Do NOT go back to `.forEach(broadcast)`: that fanned a
+      // multi-node edit into one message per node and hit the Realtime rate limit.
+      broadcast(op);
     },
     [broadcast]
   );
@@ -441,20 +535,46 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     [slug]
   );
 
+  /** Monotonic id of the most recently scheduled save, and the chain that serialises
+   *  them. See the comment inside `scheduleSave`. */
+  const saveSeqRef = useRef(0);
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
+
   const scheduleSave = useCallback(() => {
     setSaveStatus("saving");
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      const ok = await saveToCloud(slug, dataRef.current, { title: projectTitle, description: projectSubtitle });
-      setSaveStatus(ok ? "saved" : "offline");
-      // Auto-snapshot at most once every 3 minutes of active editing.
-      const SNAP_INTERVAL = 180_000;
-      if (Date.now() - lastSnapshotRef.current > SNAP_INTERVAL) {
-        lastSnapshotRef.current = Date.now();
-        void saveVersion(slug, dataRef.current, { author: userRef.current?.name });
-      }
+    saveTimer.current = setTimeout(() => {
+      const seq = ++saveSeqRef.current;
+      // Saves run one at a time, in order.
+      //
+      // The 650ms debounce only coalesces edits *within* one window. Two saves a second
+      // apart both used to fly independently, and because each POST writes the whole
+      // document, a slow first request could land after a fast second one and put the
+      // older document back in the database. Chaining removes the race; the `seq` check
+      // then drops any save that a newer one has already superseded, since that newer
+      // save reads `dataRef.current` and therefore writes everything this one would.
+      saveChainRef.current = saveChainRef.current.then(async () => {
+        if (seq !== saveSeqRef.current) return;
+        // Read through refs, not the closure: this fires long after the render that
+        // scheduled it, and a rename in between must not be written back stale. Keeping
+        // the deps at [slug] also makes this stable, which matters because `commit`
+        // depends on it and roughly thirty handlers depend on `commit`.
+        const meta = titleKnownRef.current
+          ? { title: titleRef.current, description: subtitleRef.current }
+          : undefined; // unknown name → save the document only, leave metadata untouched
+        const ok = await saveToCloud(slug, dataRef.current, meta);
+        // Only the newest save owns the indicator, or a slow failure would show
+        // "offline" over a later success.
+        if (seq === saveSeqRef.current) setSaveStatus(ok ? "saved" : "offline");
+        // Auto-snapshot at most once every 3 minutes of active editing.
+        const SNAP_INTERVAL = 180_000;
+        if (ok && Date.now() - lastSnapshotRef.current > SNAP_INTERVAL) {
+          lastSnapshotRef.current = Date.now();
+          void saveVersion(slug, dataRef.current, { author: userRef.current?.name });
+        }
+      });
     }, 650);
-  }, [slug, projectTitle, projectSubtitle]);
+  }, [slug]);
 
   // Same guard as `commit`. Today every caller sits behind a readOnly-guarded pointer
   // handler, so this is belt-and-braces — but view mode is about to become a first-class
@@ -497,13 +617,50 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     if (id) select([]);
   }, [select]);
 
+  // Switching level resets what you were looking at.
+  //
   // A selection made at one level means nothing at another: the ids are no longer on
   // screen, so Delete or an arrow key would silently act on nodes the user cannot see.
+  // A tour is likewise a walk through ONE level's steps, so carrying its index into a
+  // list of a different length stranded the bar reading e.g. "step 12 / 7" with the
+  // Walk-the-journey button still disabled and no way back except a reload.
+  //
   // Declared here because it needs `select` / `selectConn`, which are defined above.
   useEffect(() => {
     select([]);
     selectConn(null);
+    setTourIndex(null);
   }, [level, select, selectConn]);
+
+  /**
+   * Re-frame when the level changes.
+   *
+   * The levels share one coordinate space — that is the whole point, since it is what
+   * keeps a pathway where the editor put it — but they occupy very different parts of
+   * it. Leaving the camera alone across a switch therefore pointed it at a region the
+   * new level has nothing in: clicking "The shape" on the return-claims map showed a
+   * completely blank canvas, with the seven steps sitting off screen. Measured, not
+   * guessed.
+   *
+   * Framed the same way the diagram opens — readable first, fitted only when fitting is
+   * still legible — so switching level cannot drop the reader to the 23% zoom that
+   * fitting seven steps spread across a 33,000px document would otherwise give.
+   *
+   * Deferred a beat because the incoming level's cards have not mounted or been measured
+   * on the tick the level changes, and framing against missing sizes is what produced
+   * the wrong zoom in the first place. Skipped on the first run: the load effect owns
+   * the opening frame and would otherwise be fought for it.
+   */
+  const framedOnce = useRef(false);
+  useEffect(() => {
+    if (!framedOnce.current) {
+      framedOnce.current = true;
+      return;
+    }
+    pendingFrameRef.current = true;
+    const t = setTimeout(() => frameRef.current(), 180);
+    return () => clearTimeout(t);
+  }, [level]);
 
   /* ------------------------- layout preferences ------------------------ */
   useEffect(() => {
@@ -546,19 +703,49 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   useEffect(() => {
     let cancelled = false;
     const cached = getCachedData(slug);
+    // Buffer remote ops from here until the read resolves — see `pendingRemoteRef`.
+    docReadyRef.current = false;
+    pendingRemoteRef.current = [];
     (async () => {
-      const cloud = await fetchCloudData(slug);
+      const read = await readCloudDoc(slug);
       if (cancelled) return;
-      if (cloud) {
-        dataRef.current = cloud;
-        setData(cloud);
-      } else if (!cached) {
-        // First time this diagram is opened anywhere — seed the cloud.
-        saveToCloud(slug, dataRef.current, { title, description: subtitle });
+      if (read.status === "ok") {
+        // Replay whatever landed while we were waiting, in arrival order, so a
+        // collaborator's edits during the load survive the swap.
+        const replayed = pendingRemoteRef.current.reduce(applyOp, read.data);
+        dataRef.current = replayed;
+        setData(replayed);
+      } else if (read.status === "absent" && !cached) {
+        // Seed ONLY on a definite 404. A failed read used to land here too, which wrote
+        // the starter template over whatever was really in the database — the exact
+        // incident persistence.md records.
+        saveToCloud(slug, dataRef.current, {
+          title: title ?? PLACEHOLDER_TITLE,
+          description: subtitle ?? PLACEHOLDER_SUBTITLE,
+        });
+      } else if (read.status === "error") {
+        setSaveStatus("offline");
       }
+      // Did a previous session leave work that never landed? Offer it, do not apply it.
+      // Only when it actually differs from what we just loaded, so a save that failed
+      // and then succeeded from another tab does not nag.
+      if (read.status === "ok") {
+        const stash = getUnsaved(slug);
+        if (stash && JSON.stringify(stash.data) !== JSON.stringify(read.data)) {
+          setUnsaved(stash);
+        } else if (stash) {
+          clearUnsaved(slug);
+        }
+      }
+      pendingRemoteRef.current = [];
+      docReadyRef.current = true;
       setLoaded(true);
-      setDocSettled(true);
+      // `docSettled` means "we know what this document is". A failed read means we do
+      // not, so geometry capture and arrange-on-open must stay parked rather than run
+      // against a stale cache and write it back over a newer cloud copy.
+      if (read.status !== "error") setDocSettled(true);
       // Fit after node sizes have been measured (rAF + short delay covers the measurement pass).
+      pendingFrameRef.current = true;
       setTimeout(() => frameRef.current(), 180);
     })();
     return () => {
@@ -741,6 +928,13 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     };
   }, []);
 
+  // The canvas just gained a size and an opening frame is still owed — apply it now.
+  // Without this, opening a diagram in a background tab left it at the default 100% pan
+  // with the process starting off screen, and nothing ever corrected it.
+  useEffect(() => {
+    if (pendingFrameRef.current && viewport.w > 0 && viewport.h > 0) frameRef.current();
+  }, [viewport.w, viewport.h]);
+
   /* ------------------------------ helpers ------------------------------ */
   const screenToWorld = useCallback((clientX: number, clientY: number) => {
     const r = cwRef.current!.getBoundingClientRect();
@@ -782,20 +976,25 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     (subset?: FlowNode[]) => {
       const ns = subset && subset.length ? subset : currentScope().nodes;
       const b = computeBounds(ns, sizes);
-      if (!b || !cwRef.current) return;
-      const r = cwRef.current.getBoundingClientRect();
-      const pad = 90;
-      const z = Math.min((r.width - pad * 2) / b.w, (r.height - pad * 2) / b.h, 1.6);
-      const nz = Math.max(0.05, Math.min(z, 2));
-      commitView({
-        pan: {
-          x: r.width / 2 - (b.minX + b.w / 2) * nz,
-          y: r.height / 2 - (b.minY + b.h / 2) * nz,
-        },
-        zoom: nz,
-      });
+      if (!b) return;
+      whenCanvasSized(
+        () => cwRef.current,
+        (r) => {
+          const pad = 90;
+          const z = Math.min((r.width - pad * 2) / b.w, (r.height - pad * 2) / b.h, 1.6);
+          const nz = Math.max(0.05, Math.min(z, 2));
+          commitView({
+            pan: {
+              x: r.width / 2 - (b.minX + b.w / 2) * nz,
+              y: r.height / 2 - (b.minY + b.h / 2) * nz,
+            },
+            zoom: nz,
+          });
+          pendingFrameRef.current = false;
+        }
+      );
     },
-    [sizes, commitView]
+    [sizes, commitView, currentScope]
   );
   const fitView = useCallback(() => computeFit(), [computeFit]);
   fitRef.current = fitView;
@@ -817,29 +1016,36 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const frameForReading = useCallback(() => {
     const scope = currentScope();
     const b = computeBounds(scope.nodes, sizes);
-    if (!b || !cwRef.current) return;
-    const r = cwRef.current.getBoundingClientRect();
-    const pad = 90;
-    const fitZoom = Math.min((r.width - pad * 2) / b.w, (r.height - pad * 2) / b.h, 1.6);
-    if (fitZoom >= READABLE_ZOOM) {
-      computeFit();
-      return;
-    }
-    // Anchor on the start of the process; fall back to the first step of the walk, then
-    // to whatever exists, so a map with no explicit start still opens somewhere sensible.
-    const anchor = scope.nodes.find((n) => n.type === "start") ?? tourOrder(scope)[0] ?? scope.nodes[0];
-    if (!anchor) {
-      computeFit();
-      return;
-    }
-    const s = sizeOf(anchor.id, sizes);
-    commitView({
-      pan: {
-        x: r.width / 2 - (anchor.x + s.w / 2) * READABLE_ZOOM,
-        y: r.height / 2 - (anchor.y + s.h / 2) * READABLE_ZOOM,
-      },
-      zoom: READABLE_ZOOM,
-    });
+    if (!b) return;
+    whenCanvasSized(
+      () => cwRef.current,
+      (r) => {
+        const pad = 90;
+        const fitZoom = Math.min((r.width - pad * 2) / b.w, (r.height - pad * 2) / b.h, 1.6);
+        if (fitZoom >= READABLE_ZOOM) {
+          computeFit();
+          return;
+        }
+        // Anchor on the start of the process; fall back to the first step of the walk,
+        // then to whatever exists, so a map with no explicit start still opens somewhere
+        // sensible.
+        const anchor =
+          scope.nodes.find((n) => n.type === "start") ?? tourOrder(scope)[0] ?? scope.nodes[0];
+        if (!anchor) {
+          computeFit();
+          return;
+        }
+        const s = sizeOf(anchor.id, sizes);
+        commitView({
+          pan: {
+            x: r.width / 2 - (anchor.x + s.w / 2) * READABLE_ZOOM,
+            y: r.height / 2 - (anchor.y + s.h / 2) * READABLE_ZOOM,
+          },
+          zoom: READABLE_ZOOM,
+        });
+        pendingFrameRef.current = false;
+      }
+    );
   }, [sizes, commitView, computeFit, currentScope]);
   frameRef.current = frameForReading;
 
@@ -1056,9 +1262,20 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     const newNodes = cb.nodes.map((n) => {
       const nid = generateNodeId();
       idMap.set(n.id, nid);
-      return { ...n, id: nid, x: n.x + 40, y: n.y + 40 };
+      // Land on the level being viewed, like every other creation path. Without this a
+      // paste kept the level it was COPIED from, so pasting into a different level saved
+      // and broadcast nodes that were invisible here — and then `select()` below put
+      // them in the selection, so the next Delete removed cards nobody could see.
+      return { ...n, id: nid, x: n.x + 40, y: n.y + 40, level: levelRef.current };
     }).map((n) => remapChildren(n, idMap));
-    const newConns = cb.conns.map((c) => ({ ...c, id: newConnId(), from: idMap.get(c.from)!, to: idMap.get(c.to)! }));
+    // Connections are level-filtered too; stamping only the nodes pastes cards with no arrows.
+    const newConns = cb.conns.map((c) => ({
+      ...c,
+      id: newConnId(),
+      from: idMap.get(c.from)!,
+      to: idMap.get(c.to)!,
+      level: levelRef.current,
+    }));
     commit(
       (prev) => ({ nodes: [...prev.nodes, ...newNodes], connections: [...prev.connections, ...newConns] }),
       [
@@ -1963,7 +2180,11 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     const isBg = e.target === cwRef.current || e.target === canvasRef.current || (e.target as HTMLElement).tagName === "svg";
     if (!isBg) return;
     if (tool === "pan" || spaceRef.current || e.button === 1) {
-      panDragRef.current = { sx: e.clientX - pan.x, sy: e.clientY - pan.y };
+      // `viewRef`, not `pan`: this handler closes over the pan from its render, so
+      // grabbing the canvas again mid-gesture (or right after a wheel-zoom) anchored to
+      // a stale origin and the view jumped. The mousemove branch already uses viewRef.
+      const vp = viewRef.current.pan;
+      panDragRef.current = { sx: e.clientX - vp.x, sy: e.clientY - vp.y };
       beginInteraction();
     } else {
       if (!e.shiftKey) {
@@ -2332,6 +2553,11 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     const s = (nextSubtitle ?? tempSubtitle).trim();
     setProjectTitle(t);
     setProjectSubtitle(s);
+    // The user just told us the name, so it is known even if the gallery never resolved.
+    // Set the refs directly: `scheduleSave` below runs before React re-renders.
+    titleKnownRef.current = true;
+    titleRef.current = t;
+    subtitleRef.current = s;
     setIsEditingTitle(false);
     if (typeof document !== "undefined") {
       document.title = `${t} | Process Mapping`;
@@ -2343,20 +2569,24 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   const setNodePathwaysBold = useCallback(
     (nodeIds: string[], bold: boolean) => {
       const nodeSet = new Set(nodeIds);
-      const updatedConns: FlowConnection[] = [];
+      // Pass `ops` itself, never `ops.map(...)`. Arguments are evaluated before the call,
+      // so a `.map()` here runs while the array is still empty and every peer receives an
+      // empty batch — bolding worked locally and silently never reached anyone else. The
+      // bare reference works because `commit` runs the producer before it broadcasts.
+      const ops: Op[] = [];
       commit(
         (prev) => {
           const connections = prev.connections.map((c) => {
             if (nodeSet.has(c.from) || nodeSet.has(c.to)) {
               const updated = { ...c, bold };
-              updatedConns.push(updated);
+              ops.push({ t: "conn.upsert", origin: uid, conn: updated });
               return updated;
             }
             return c;
           });
           return { ...prev, connections };
         },
-        updatedConns.map((c) => ({ t: "conn.upsert", origin: uid, conn: c }))
+        ops
       );
     },
     [commit, uid]
@@ -2578,7 +2808,11 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
         const parsed = JSON.parse(content);
         if (Array.isArray(parsed.nodes)) {
           const nodes = parsed.nodes as FlowNode[];
-          let connections = (parsed.connections || []) as FlowConnection[];
+          // Give every imported connection a stable id *before* it is committed, so the
+          // `doc.replace` carries the same ids the local copy holds. Without this the
+          // importer fell back to `from__to` locally while peers generated their own,
+          // and dragging an endpoint afterwards duplicated the pathway on every peer.
+          let connections = backfillConnIds((parsed.connections || []) as FlowConnection[]);
           if (connections.length === 0 && nodes.length > 1) {
             const sorted = [...nodes].sort((a, b) => a.y - b.y || a.x - b.x);
             connections = sorted.slice(0, -1).map((src, i) => ({
@@ -2596,7 +2830,21 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
           commit(() => ({ nodes, connections }), [{ t: "doc.replace", origin: uid, nodes, connections }]);
           // Scoped for the same reason as the AI edit path: ids on unmounted levels are
           // never measured, so an unscoped call burns the full 4s ceiling.
-          void measureThenLayout(atLevel({ nodes, connections }, levelRef.current).nodes.map((n) => n.id));
+          //
+          // Resolve the level the import will actually be SHOWN at first. The current
+          // level frequently does not survive an import — the snap effect moves off a
+          // level the new document has no nodes on — so waiting on the old level's ids
+          // meant waiting on ids that never mount, and the wait fell through instantly
+          // to arrange against unmeasured cards. That is the overlapping, scattered
+          // result `measureThenLayout` exists to prevent.
+          const next = { nodes, connections };
+          const levels = populatedLevels(next);
+          const target = levels.includes(levelRef.current)
+            ? levelRef.current
+            : (levels[levels.length - 1] ?? DEFAULT_LEVEL);
+          setLevel(target);
+          levelRef.current = target;
+          void measureThenLayout(atLevel(next, target).nodes.map((n) => n.id));
         } else {
           alert("Invalid flowchart JSON format.");
         }
@@ -2759,6 +3007,29 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     readOnly,
   };
 
+  // Same idiom as `cardFns`, for the pathway handlers. `connContextMenu` closes over
+  // `openLabelEdit`, which depends on `sizes` — so a plain useCallback would still go
+  // unstable on every re-measure and defeat React.memo on every Edge.
+  // Hoisted out of the <LayersPanel> JSX: inline arrows gave it two new props on every
+  // canvas frame, so the rail rebuilt all ~1,100 of its elements during every pan and
+  // drag. This is the same fix the cards already got.
+  const layerSelectNode = useCallback(
+    (id: string, additive?: boolean) =>
+      select(additive ? [...new Set([...selRef.current, id])] : [id]),
+    [select]
+  );
+  const layerDeleteNode = useCallback(
+    (id: string) => {
+      select([id]);
+      deleteSelection();
+    },
+    [select, deleteSelection]
+  );
+
+  const connFns = useRef({ connContextMenu });
+  connFns.current = { connContextMenu };
+  const connCtx = useCallback((e: React.MouseEvent, id: string) => connFns.current.connContextMenu(e, id), []);
+
   const cardMouseDown = useCallback((e: React.MouseEvent, n: FlowNode) => cardFns.current.onNodeMouseDown(e, n), []);
   const cardPortDown = useCallback(
     (e: React.MouseEvent, n: FlowNode, port: string) => cardFns.current.onPortMouseDown(e, n, port),
@@ -2783,7 +3054,13 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   );
   const cardUpdate = useCallback((updated: FlowNode) => cardFns.current.saveNode(updated), []);
 
-  const selectedNodes = view.nodes.filter((n) => selectedIds.includes(n.id));
+  /** Selection as a Set. `selectedIds.includes` was called once per node per render, in
+   *  three places, so a 109-node drag frame ran ~330 linear scans for nothing. */
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selectedNodes = useMemo(
+    () => view.nodes.filter((n) => selectedSet.has(n.id)),
+    [view.nodes, selectedSet]
+  );
 
   // The step a reader has open. Viewer cards carry almost nothing on purpose — a card
   // dense enough to be complete is too dense to scan — so the detail lives in the panel.
@@ -2811,15 +3088,32 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
   // Guided tour. Reader-only, and deliberately thin: it drives the ordinary selection, so
   // the panel that opens, the pathways that stay lit and the pan that happens are exactly
   // the ones a click produces. One behaviour to keep correct instead of two.
-  const [tourIndex, setTourIndex] = useState<number | null>(null);
+  // (`tourIndex` itself is declared up with `level`, which resets it.)
   const tourSteps = useMemo(() => tourOrder(view), [view]);
+
+  /**
+   * Everything the tour effect needs, behind a ref.
+   *
+   * The effect must fire on `tourIndex` and nothing else. `tourSteps` is derived from
+   * `view`, which is rebuilt whenever `data` changes — including for every remote op —
+   * and `focusNode` changes identity whenever a card is re-measured. With those in the
+   * dependency array the effect re-ran while a collaborator was dragging, and each run
+   * called `select` + `focusNode`, so a reader on a tour had their selection snapped
+   * back and the viewport re-centred once per broadcast frame. They could not click a
+   * neighbouring card or hold a pan while anyone else was editing.
+   */
+  const tourRef = useRef({ tourSteps, select, focusNode });
+  tourRef.current = { tourSteps, select, focusNode };
   useEffect(() => {
     if (tourIndex === null) return;
-    const step = tourSteps[tourIndex];
+    const t = tourRef.current;
+    const step = t.tourSteps[tourIndex];
     if (!step) return;
-    select([step.id]);
-    focusNode(step.id);
-  }, [tourIndex, tourSteps, select, focusNode]);
+    t.select([step.id]);
+    t.focusNode(step.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see tourRef above
+  }, [tourIndex]);
+
   // Leaving reader mode ends the tour: the editor chrome has no bar to drive it from, and
   // a tour running invisibly would keep stealing selection.
   useEffect(() => {
@@ -2916,16 +3210,11 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
               selectedIds={selectedIds}
               selectedConn={selectedConn}
               readOnly={readOnly}
-              onSelectNode={(id, additive) =>
-                select(additive ? [...new Set([...selRef.current, id])] : [id])
-              }
+              onSelectNode={layerSelectNode}
               onSelectConn={selectConn}
               onRenameNode={renameNode}
               onFocusNode={focusNode}
-              onDeleteNode={(id) => {
-                select([id]);
-                deleteSelection();
-              }}
+              onDeleteNode={layerDeleteNode}
             />
           ))}
 
@@ -2989,7 +3278,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
                 sizes={sizes}
                 selectedId={selectedConn}
                 onSelect={selectConn}
-                onContextMenu={connContextMenu}
+                onContextMenu={connCtx}
                 onEditLabel={openLabelEdit}
                 ghost={ghost}
                 onWaypointDown={readOnly ? undefined : onWaypointDown}
@@ -3017,7 +3306,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
                   <FlowNodeCard
                     key={node.id}
                     node={node}
-                    isSelected={selectedIds.includes(node.id)}
+                    isSelected={selectedSet.has(node.id)}
                     isDropTarget={dropTarget === node.id}
                     viewMode={viewMode}
                     onMouseDown={cardMouseDown}
@@ -3052,6 +3341,55 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
               viewportH={viewport.h}
               onRecenter={recenterWorld}
             />
+          )}
+
+          {/* Work from a previous session that never reached the server. Shown, never
+              applied automatically: restoring silently would overwrite whatever is in
+              the cloud now, and discarding silently is what used to happen. */}
+          {unsaved && !readOnly && (
+            <div
+              className="absolute top-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 rounded-xl border px-4 py-2.5 shadow-lg"
+              style={{
+                background: "var(--ui-panel)",
+                borderColor: "var(--ui-border)",
+                color: "var(--ui-text)",
+              }}
+            >
+              <div className="text-[11.5px] leading-snug">
+                <span className="font-semibold">Unsaved changes from a previous session.</span>{" "}
+                <span style={{ color: "var(--ui-text-faint)" }}>
+                  {unsaved.data.nodes.length} steps, last edited{" "}
+                  {unsaved.at ? new Date(unsaved.at).toLocaleString() : "recently"}.
+                </span>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg px-2.5 py-1 text-[11px] font-semibold text-white"
+                style={{ background: "var(--ui-accent)" }}
+                onClick={() => {
+                  const restored = unsaved.data;
+                  snapshotNow("Before restoring unsaved changes");
+                  commit(() => restored, [
+                    { t: "doc.replace", origin: uid, nodes: restored.nodes, connections: restored.connections },
+                  ]);
+                  clearUnsaved(slug);
+                  setUnsaved(null);
+                }}
+              >
+                Restore
+              </button>
+              <button
+                type="button"
+                className="rounded-lg px-2.5 py-1 text-[11px] font-semibold"
+                style={{ background: "var(--ui-hover)", color: "var(--ui-text-faint)" }}
+                onClick={() => {
+                  clearUnsaved(slug);
+                  setUnsaved(null);
+                }}
+              >
+                Discard
+              </button>
+            </div>
           )}
 
           {!loaded && (
@@ -3110,6 +3448,7 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
               <NodeDetailPanel
                 node={detailNode}
                 data={view}
+                doc={data}
                 incoming={neighbours.incoming}
                 outgoing={neighbours.outgoing}
                 onClose={() => select([])}

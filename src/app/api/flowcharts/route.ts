@@ -66,18 +66,49 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { slug, title, description, nodes, connections, color, isCustom } = body;
 
-    if (!slug || !title) {
-      return NextResponse.json({ error: "Missing slug or title" }, { status: 400 });
+    if (!slug) {
+      return NextResponse.json({ error: "Missing slug" }, { status: 400 });
     }
 
     const nodeCount = Array.isArray(nodes) ? nodes.length : 0;
+
+    // A document save with no title must not invent one.
+    //
+    // The editor autosaves on every edit and used to send its `projectTitle` every time.
+    // That state starts from the gallery lookup, which falls back to the placeholder
+    // "Process Flowchart" when the list has not resolved — so on a slow or failed list
+    // fetch, the first edit renamed the diagram to the placeholder, and a rename made
+    // through PATCH was undone by the very next autosave 650ms later. Omitting the title
+    // now means "leave the metadata exactly as it is", which is what a document save
+    // should always have meant. PATCH remains the only way to change a name.
+    if (!title) {
+      const { data: updated, error: updateErr } = await supabaseAdmin
+        .from("flowcharts")
+        .update({
+          nodes: nodes || [],
+          connections: connections || [],
+          node_count: nodeCount,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("slug", slug)
+        .select("slug");
+
+      if (updateErr) {
+        return NextResponse.json({ error: updateErr.message }, { status: 500 });
+      }
+      if (updated && updated.length > 0) {
+        return NextResponse.json({ success: true });
+      }
+      // No such row yet. Creating one needs *some* title, and the slug is at least
+      // truthful — better than refusing the write and dropping the user's work.
+    }
 
     const { data, error } = await supabaseAdmin
       .from("flowcharts")
       .upsert(
         {
           slug,
-          title,
+          title: title || slug,
           description: description || "",
           nodes: nodes || [],
           connections: connections || [],

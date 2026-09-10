@@ -29,7 +29,14 @@ export interface NeighbourStep {
 
 interface Props {
   node: FlowNode;
+  /** The *current level's* slice of the document. Edges and neighbour labels come from
+   *  here, so the panel never signposts a step the reader cannot see. */
   data: FlowData;
+  /** The **whole** document, all levels. Children resolve against this and only this: a
+   *  level-1 node's `children` are level-2 nodes, which `data` has by definition filtered
+   *  out, so resolving them there silently returned nothing and "What this collapses"
+   *  never rendered on any node. */
+  doc: FlowData;
   /** Steps flow arrives from, and departs to. Rendered as signposts so a reader always
    *  knows where they are in the process without tracing lines by eye. */
   incoming: NeighbourStep[];
@@ -44,7 +51,7 @@ const num = (v: string | number) => (typeof v === "number" ? v.toLocaleString() 
 
 /** The step as YAML. Deliberately hand-rolled rather than JSON.stringify: the point is
  *  something a person can read aloud and an LLM can parse, without quote noise. */
-function toClaudeView(node: FlowNode, data: FlowData): string {
+function toClaudeView(node: FlowNode, data: FlowData, doc: FlowData): string {
   const L: string[] = [];
   const push = (k: string, v: string | number | undefined, indent = 0) => {
     if (v === undefined || v === "") return;
@@ -87,7 +94,7 @@ function toClaudeView(node: FlowNode, data: FlowData): string {
     }
   }
 
-  const kids = childrenOf(data, node);
+  const kids = childrenOf(doc, node);
   if (kids.length) {
     L.push("collapses:");
     for (const k of kids) L.push(`  - ${k.id}: ${k.label}`);
@@ -215,6 +222,7 @@ function Signpost({
 export default function NodeDetailPanel({
   node,
   data,
+  doc,
   incoming,
   outgoing,
   onClose,
@@ -224,8 +232,11 @@ export default function NodeDetailPanel({
   const [tab, setTab] = useState<Tab>("human");
   const actor = node.actor ? ACTOR_STYLES[node.actor] : null;
   const facts = node.facts;
-  const kids = useMemo(() => childrenOf(data, node), [data, node]);
-  const yaml = useMemo(() => (tab === "claude" ? toClaudeView(node, data) : ""), [tab, node, data]);
+  const kids = useMemo(() => childrenOf(doc, node), [doc, node]);
+  const yaml = useMemo(
+    () => (tab === "claude" ? toClaudeView(node, data, doc) : ""),
+    [tab, node, data, doc]
+  );
   const stageLine = node.internalStage || node.externalStage || node.stage || "";
 
   return (

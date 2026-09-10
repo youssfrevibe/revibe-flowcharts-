@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { FlowConnection, FlowNode, NodeType } from "@/lib/types";
 import { connId } from "@/lib/ops";
 import { getNodeFill } from "@/lib/node-colors";
@@ -46,7 +46,7 @@ function TypeIcon({ type, color }: { type: NodeType; color: string }) {
  * pan around hunting for it. Selecting a row here selects it on the canvas, double-clicking
  * renames it in place, and the arrow button jumps the viewport to it.
  */
-export default function LayersPanel({
+function LayersPanel({
   nodes,
   connections,
   selectedIds,
@@ -64,6 +64,7 @@ export default function LayersPanel({
 
   const q = query.trim().toLowerCase();
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
   const visibleNodes = useMemo(
     () => (q ? nodes.filter((n) => `${n.label} ${n.detail}`.toLowerCase().includes(q)) : nodes),
@@ -123,7 +124,7 @@ export default function LayersPanel({
             <Empty text={q ? "No shapes match." : "No shapes yet."} />
           ) : (
             visibleNodes.map((n) => {
-              const selected = selectedIds.includes(n.id);
+              const selected = selectedSet.has(n.id);
               const isEditing = editing?.id === n.id;
               return (
                 <div
@@ -258,3 +259,15 @@ function Empty({ text }: { text: string }) {
     </div>
   );
 }
+
+/**
+ * Memoised deliberately.
+ *
+ * The canvas re-renders on every pan and drag frame, and this rail is unvirtualised —
+ * one row, three icons and a couple of buttons per node — so re-rendering it in step
+ * with the canvas rebuilt roughly 1,100 elements sixty times a second and was plainly
+ * visible as lag with the rail open. Every prop is stable between real changes, so the
+ * bail-out is genuine; keep the callbacks at the call site inside useCallback or this
+ * silently stops working.
+ */
+export default memo(LayersPanel);

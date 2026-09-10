@@ -19,8 +19,9 @@ interface Options {
 interface Result {
   peers: Collaborator[];
   status: ConnStatus;
-  /** Broadcast a local op to everyone else on this diagram. */
-  broadcast: (op: Op) => void;
+  /** Broadcast local ops to everyone else on this diagram. A batch travels as ONE
+   *  message — see the note on `broadcast` below. */
+  broadcast: (ops: Op | Op[]) => void;
 }
 
 /**
@@ -56,8 +57,17 @@ export function useRealtimeDoc({ slug, user, clientId, onRemoteOp }: Options): R
     channelRef.current = channel;
 
     channel.on("broadcast", { event: "op" }, ({ payload }) => {
-      const op = payload as Op;
-      if (op && op.origin !== clientId) onOpRef.current(op);
+      // Two wire shapes: a bare op, and `{ ops: [...] }` for a batch. Both are accepted
+      // so a tab left open across a deploy still understands the other one.
+      const p = payload as Op | { ops?: Op[] } | null;
+      const ops: Op[] = p && Array.isArray((p as { ops?: Op[] }).ops)
+        ? ((p as { ops: Op[] }).ops)
+        : p
+          ? [p as Op]
+          : [];
+      for (const op of ops) {
+        if (op && op.origin !== clientId) onOpRef.current(op);
+      }
     });
 
     const syncPeers = () => {
@@ -65,7 +75,11 @@ export function useRealtimeDoc({ slug, user, clientId, onRemoteOp }: Options): R
       const seen = new Map<string, Collaborator>();
       Object.values(state).forEach((metas) => {
         metas.forEach((m) => {
-          if (m.userId) seen.set(m.userId, { userId: m.userId, name: m.name, color: m.color });
+          // Skip yourself: presence includes the local user, so a solo editor saw one
+          // "collaborator" in the avatar stack and every count was one too high.
+          if (m.userId && m.userId !== userId) {
+            seen.set(m.userId, { userId: m.userId, name: m.name, color: m.color });
+          }
         });
       });
       setPeers([...seen.values()]);
@@ -91,10 +105,53 @@ export function useRealtimeDoc({ slug, user, clientId, onRemoteOp }: Options): R
     };
   }, [slug, userId, userName, userColor]);
 
-  const broadcast = useCallback((op: Op) => {
+  /**
+   * One message per *batch*, not per op.
+   *
+   * This used to send each op separately, so capturing geometry on a 109-node diagram
+   * fired 109 sends in a single tick, as did deleting, duplicating or recolouring a
+   * large selection. Realtime rate-limits messages per client and drops the overflow,
+   * and a dropped op is a silent divergence: the sender's document and the peer's stop
+   * matching with nothing on screen to say so.
+   *
+   * Batches are still split by serialised size, because the other way to lose a message
+   * is to exceed the per-message payload limit — one oversized send would drop the whole
+   * batch, which is strictly worse than the fan-out it replaced.
+   */
+  const broadcast = useCallback((ops: Op | Op[]) => {
     const ch = channelRef.current;
     if (!ch) return;
-    ch.send({ type: "broadcast", event: "op", payload: op }).catch(() => {});
+    const list = Array.isArray(ops) ? ops : [ops];
+    if (!list.length) return;
+
+    const send = (batch: Op[]) => {
+      if (!batch.length) return;
+      // The result was thrown away, so a rejected or rate-limited send looked exactly
+      // like a delivered one and the badge still read "live" while peers silently fell
+      // behind. Report it instead; the next successful send flips it back.
+      void ch
+        .send({ type: "broadcast", event: "op", payload: { ops: batch } })
+        .then((res) => setStatus(res === "ok" ? "live" : "offline"))
+        .catch(() => setStatus("offline"));
+    };
+
+    // Comfortably under Realtime's 256KB ceiling, leaving room for envelope overhead.
+    const MAX_BYTES = 180_000;
+    let batch: Op[] = [];
+    let bytes = 0;
+    for (const op of list) {
+      const size = JSON.stringify(op).length;
+      // A single op larger than the cap cannot be split; send it alone and let the
+      // server decide rather than silently dropping it in with others.
+      if (batch.length && bytes + size > MAX_BYTES) {
+        send(batch);
+        batch = [];
+        bytes = 0;
+      }
+      batch.push(op);
+      bytes += size;
+    }
+    send(batch);
   }, []);
 
   return { peers, status, broadcast };

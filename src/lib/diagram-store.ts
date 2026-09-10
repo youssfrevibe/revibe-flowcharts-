@@ -125,6 +125,52 @@ export function cacheData(slug: string, data: FlowData): void {
   } catch {}
 }
 
+/* --------------------------- unsaved recovery -------------------------- */
+
+/**
+ * A document that failed to reach the server, kept aside so the next session can offer
+ * it back.
+ *
+ * The ordinary cache is not enough: it lives under the same key the cloud read writes
+ * to, so the next successful load overwrote the very work that had not been saved, and
+ * an editing session that ended during an outage was simply gone with nothing to say so.
+ * This stash sits under its own key and is only ever cleared by a successful save or by
+ * the user declining it.
+ */
+export interface UnsavedWork {
+  data: FlowData;
+  at: string;
+}
+
+const unsavedKey = (slug: string) => `flowchart-${slug}-unsaved`;
+
+export function stashUnsaved(slug: string, data: FlowData): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(unsavedKey(slug), JSON.stringify({ data, at: new Date().toISOString() }));
+  } catch {}
+}
+
+export function getUnsaved(slug: string): UnsavedWork | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(unsavedKey(slug));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed?.data && Array.isArray(parsed.data.nodes)) {
+      return { data: normalize(parsed.data), at: String(parsed.at || "") };
+    }
+  } catch {}
+  return null;
+}
+
+export function clearUnsaved(slug: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(unsavedKey(slug));
+  } catch {}
+}
+
 /** Instant initial data for first paint: cache → builtin default → null-for-custom starter. */
 export function getInitialData(slug: string): FlowData {
   return getCachedData(slug) || getDefaultData(slug);
@@ -133,19 +179,35 @@ export function getInitialData(slug: string): FlowData {
 /* ----------------------------- cloud reads ----------------------------- */
 
 /** Fetches the authoritative document from the cloud. Returns null if it doesn't exist there yet. */
-export async function fetchCloudData(slug: string): Promise<FlowData | null> {
+/**
+ * The outcome of reading a document from the cloud.
+ *
+ * "absent" and "error" must stay distinguishable. They were both `null`, and the caller
+ * reasonably read that as "nothing is stored here, seed it" — so a failed request caused
+ * the starter template to be written over a real document. Only a definite 404 now means
+ * absent; every other outcome, including a 200 whose body cannot be parsed, is an error.
+ */
+export type CloudRead =
+  | { status: "ok"; data: FlowData }
+  | { status: "absent" }
+  | { status: "error" };
+
+export async function readCloudDoc(slug: string): Promise<CloudRead> {
   try {
     const res = await fetch(`/api/flowcharts/${slug}`, { cache: "no-store" });
-    if (!res.ok) return null;
+    if (res.status === 404) return { status: "absent" };
+    if (!res.ok) return { status: "error" };
     const json = await res.json();
     const fc = json.flowchart;
     if (fc && Array.isArray(fc.nodes)) {
       const data = normalize({ nodes: fc.nodes, connections: fc.connections || [] });
       cacheData(slug, data);
-      return data;
+      return { status: "ok", data };
     }
-  } catch {}
-  return null;
+    return { status: "error" };
+  } catch {
+    return { status: "error" };
+  }
 }
 
 /* ----------------------------- cloud writes ---------------------------- */
@@ -158,8 +220,12 @@ export async function saveToCloud(
 ): Promise<boolean> {
   cacheData(slug, data);
   const known = getCachedDiagrams().find((d) => d.slug === slug);
-  const title = meta?.title || known?.title || slug;
-  const description = meta?.description ?? known?.description ?? "";
+  // `undefined` title = "save the document, leave the name alone". Only an explicit
+  // title (or one we genuinely know from the gallery cache) is sent; guessing `slug`
+  // here is how autosaves used to rename diagrams behind the user's back. The server
+  // treats a missing title as a document-only update.
+  const title = meta?.title || known?.title;
+  const description = meta?.description ?? known?.description;
   const color = meta?.color || known?.color || (BUILTIN_SLUGS.has(slug) ? "bg-emerald-700" : "bg-purple-700");
   const isCustom = meta?.isCustom ?? known?.isCustom ?? !BUILTIN_SLUGS.has(slug);
 
@@ -168,14 +234,23 @@ export async function saveToCloud(
       const list = getCachedDiagrams();
       const nextList = list.map((d) =>
         d.slug === slug
-          ? { ...d, title, description, color, isCustom, nodeCount: data.nodes.length, updatedAt: new Date().toISOString() }
+          ? {
+              ...d,
+              // Never downgrade a known name to a placeholder in the gallery either.
+              title: title ?? d.title,
+              description: description ?? d.description,
+              color,
+              isCustom,
+              nodeCount: data.nodes.length,
+              updatedAt: new Date().toISOString(),
+            }
           : d
       );
       if (!list.some((d) => d.slug === slug)) {
         nextList.push({
           slug,
-          title,
-          description,
+          title: title ?? slug,
+          description: description ?? "",
           color,
           isCustom,
           nodeCount: data.nodes.length,
@@ -192,16 +267,22 @@ export async function saveToCloud(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         slug,
-        title,
-        description,
+        // Omitted entirely when unknown — see the note above.
+        ...(title ? { title } : {}),
+        ...(description !== undefined ? { description } : {}),
         nodes: data.nodes,
         connections: data.connections,
         color,
         isCustom,
       }),
     });
+    // Keep a copy of anything that did not land, so the next session can offer it back
+    // instead of the cloud read quietly replacing it.
+    if (res.ok) clearUnsaved(slug);
+    else stashUnsaved(slug, data);
     return res.ok;
   } catch {
+    stashUnsaved(slug, data);
     return false;
   }
 }

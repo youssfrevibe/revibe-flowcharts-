@@ -13,7 +13,19 @@ export async function GET(
       .eq("slug", slug)
       .single();
 
-    if (error || !data) {
+    if (error) {
+      // PostgREST returns PGRST116 when .single() matched no rows — a genuine miss.
+      // Anything else is the database failing, and answering 404 for that told the
+      // client "this diagram does not exist". The client treats that as permission to
+      // seed a brand-new document, which is how a transient outage could overwrite a
+      // real flowchart with the starter template. Fail loudly instead.
+      const missing = error.code === "PGRST116";
+      return NextResponse.json(
+        { error: missing ? "Flowchart not found" : "Flowchart lookup failed" },
+        { status: missing ? 404 : 503 }
+      );
+    }
+    if (!data) {
       return NextResponse.json({ error: "Flowchart not found" }, { status: 404 });
     }
 
