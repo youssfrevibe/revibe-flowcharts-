@@ -26,6 +26,7 @@ subsystem you are touching:
 | multi-user sync | `docs/realtime.md` |
 | Gemini generate / edit | `docs/ai.md` |
 | JSON import, PNG/SVG export | `docs/import-export.md` |
+| what to put in a node so the reader panel fills in | `docs/node-template.md` |
 
 Reading the relevant doc first is cheaper than rediscovering the trap.
 

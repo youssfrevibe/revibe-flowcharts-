@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { FlowData, FlowNode, Mover } from "@/lib/types";
+import { FactLink, FlowData, FlowNode, Mover } from "@/lib/types";
 import { ACTOR_STYLES } from "@/lib/node-colors";
 import { childrenOf, levelOf } from "@/lib/levels";
 
@@ -76,6 +76,10 @@ function toClaudeView(node: FlowNode, data: FlowData, doc: FlowData): string {
     L.push("facts:");
     push("where", f.where, 2);
     push("data_ref", f.dataRef, 2);
+    if (f.links?.length) {
+      L.push("  go_to:");
+      for (const l of f.links) L.push(`    - ${l.label}${l.url ? ` (${l.url})` : ""}`);
+    }
     if (f.volume) {
       L.push("  volume:");
       push("value", num(f.volume.value), 4);
@@ -115,6 +119,48 @@ function toClaudeView(node: FlowNode, data: FlowData, doc: FlowData): string {
   }
 
   return L.join("\n");
+}
+
+/** The plain-English name for a node type, shown under the title. "Step" tells a reader
+ *  what kind of thing they are looking at far better than the raw type does. */
+const TYPE_LABEL: Record<string, string> = {
+  start: "Start",
+  step: "Step",
+  decision: "Decision",
+  sub: "Sub-process",
+  ok: "Outcome",
+  fail: "Outcome",
+  note: "Note",
+};
+
+const LINK_ICON: Record<string, string> = {
+  dashboard: "📊",
+  tool: "🔧",
+  doc: "📄",
+  query: "🔎",
+  link: "↗",
+};
+
+/**
+ * One fact, as a label on the left and its value on the right.
+ *
+ * This replaced a striped two-column table. A table implies rows that can be compared
+ * down a column; these are unrelated single values, and reading them meant crossing a
+ * 34%-wide gutter to find each one. Label left, value right, hairline between: the eye
+ * lands on the values as a column of its own.
+ */
+function Fact({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div
+      className="flex items-start justify-between gap-4 px-3.5 py-2.5 text-[12.5px] first:rounded-t-xl last:rounded-b-xl"
+      style={{ borderTop: "1px solid var(--ui-border-soft)" }}
+    >
+      <span className="shrink-0" style={{ color: "var(--ui-text-faint)" }}>
+        {label}
+      </span>
+      <span className="text-right font-semibold">{children}</span>
+    </div>
+  );
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -237,7 +283,29 @@ export default function NodeDetailPanel({
     () => (tab === "claude" ? toClaudeView(node, data, doc) : ""),
     [tab, node, data, doc]
   );
-  const stageLine = node.internalStage || node.externalStage || node.stage || "";
+  /** Every single-value fact, in reading order, with the empty ones dropped. Built here
+   *  rather than inline so the section can be hidden when a step has none. */
+  const factRows = useMemo(() => {
+    const rows: { label: string; value: string; mono?: boolean }[] = [];
+    const add = (label: string, value?: string | number, mono?: boolean) => {
+      if (value === undefined || value === null || value === "") return;
+      rows.push({ label, value: String(value), mono });
+    };
+    add("Where", facts?.where);
+    add("Internal stage", node.internalStage || node.stage);
+    add("External stage", node.externalStage);
+    add("SLA", node.sla);
+    if (facts?.volume) add(facts.volume.note ? `Volume ${facts.volume.note}` : "Volume", num(facts.volume.value));
+    add("Data", facts?.dataRef, true);
+    return rows;
+  }, [facts, node.internalStage, node.externalStage, node.stage, node.sla]);
+
+  /** Named destinations. Falls back to `tools`, which older documents use to say the
+   *  same thing, so a step authored before `facts.links` existed still shows them. */
+  const goTo = useMemo<FactLink[]>(() => {
+    if (facts?.links?.length) return facts.links;
+    return (node.tools ?? []).map((t) => ({ label: t, kind: "tool" as const }));
+  }, [facts, node.tools]);
 
   return (
     <aside
@@ -262,11 +330,11 @@ export default function NodeDetailPanel({
         </div>
 
         <h2 className="font-display mt-3 text-[22px] font-semibold leading-[1.25]">{node.label}</h2>
-        {stageLine && (
-          <p className="mt-1 font-mono text-[12px]" style={{ color: "var(--ui-text-faint)" }}>
-            {stageLine}
-          </p>
-        )}
+        {/* What kind of thing this is. The stage names moved down into The Facts, where
+            they sit with the other single values instead of competing with the title. */}
+        <p className="mt-1 text-[12px]" style={{ color: "var(--ui-text-faint)" }}>
+          {TYPE_LABEL[node.type] ?? "Step"}
+        </p>
 
         {/* Tabs */}
         <div
@@ -281,7 +349,10 @@ export default function NodeDetailPanel({
               className="ui-btn flex-1 py-1.5 text-[12px] font-semibold"
               style={tab === t ? { background: "var(--ui-panel)", color: "var(--ui-text)" } : undefined}
             >
-              {t === "human" ? "Human view" : "</> Claude view"}
+              <span aria-hidden className="mr-1.5 opacity-70">
+                {t === "human" ? "👤" : "</>"}
+              </span>
+              {t === "human" ? "Human view" : "Claude view"}
             </button>
           ))}
         </div>
@@ -306,51 +377,63 @@ export default function NodeDetailPanel({
               </Section>
             )}
 
-            {(facts?.where || node.sla || facts?.volume || facts?.dataRef) && (
+            {factRows.length > 0 && (
               <Section title="The facts">
-                <div
-                  className="overflow-hidden rounded-xl border"
-                  style={{ borderColor: "var(--ui-border-soft)" }}
-                >
-                  <table className="w-full text-[12.5px]">
-                    <tbody>
-                      {[
-                        ["Where", facts?.where],
-                        ["SLA", node.sla],
-                        [
-                          facts?.volume?.note ? `Volume ${facts.volume.note}` : "Volume",
-                          facts?.volume ? num(facts.volume.value) : undefined,
-                        ],
-                        ["Data", facts?.dataRef],
-                      ]
-                        .filter(([, v]) => Boolean(v))
-                        .map(([k, v], i) => (
-                          <tr
-                            key={k as string}
-                            style={{ background: i % 2 ? "var(--rv-lavender)" : "transparent" }}
-                          >
-                            <th
-                              className="w-[34%] px-3 py-2.5 text-left align-top font-medium"
-                              style={{ color: "var(--ui-text-faint)" }}
-                            >
-                              {k}
-                            </th>
-                            <td className="px-3 py-2.5 align-top font-semibold">
-                              {k === "Data" ? (
-                                <code
-                                  className="rounded px-1.5 py-0.5 font-mono text-[11.5px]"
-                                  style={{ background: "var(--rv-purple-soft)", color: "var(--rv-purple-deep)" }}
-                                >
-                                  {v}
-                                </code>
-                              ) : (
-                                v
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
+                <div className="rounded-xl border" style={{ borderColor: "var(--ui-border-soft)" }}>
+                  {factRows.map((r) => (
+                    <Fact key={r.label} label={r.label}>
+                      {r.mono ? (
+                        <code
+                          className="rounded px-1.5 py-0.5 font-mono text-[11.5px]"
+                          style={{ background: "var(--rv-purple-soft)", color: "var(--rv-purple-deep)" }}
+                        >
+                          {r.value}
+                        </code>
+                      ) : (
+                        r.value
+                      )}
+                    </Fact>
+                  ))}
+                </div>
+              </Section>
+            )}
+
+            {goTo.length > 0 && (
+              <Section title="Go to">
+                <div className="flex flex-col gap-1.5">
+                  {goTo.map((l) => {
+                    const glyph = LINK_ICON[l.kind ?? "link"] ?? LINK_ICON.link;
+                    const inner = (
+                      <>
+                        <span aria-hidden className="shrink-0 opacity-80">
+                          {glyph}
+                        </span>
+                        <span className="truncate">{l.label}</span>
+                      </>
+                    );
+                    // A destination worth naming but with no URL must not pretend to be
+                    // clickable, so it renders as a plain row rather than a dead link.
+                    return l.url ? (
+                      <a
+                        key={l.label}
+                        href={l.url}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="ui-btn flex items-center gap-2.5 rounded-xl px-3.5 py-2.5 text-left text-[12.5px] font-medium"
+                        style={{ border: "1px solid var(--ui-border-soft)" }}
+                      >
+                        {inner}
+                      </a>
+                    ) : (
+                      <div
+                        key={l.label}
+                        className="flex items-center gap-2.5 rounded-xl px-3.5 py-2.5 text-[12.5px] font-medium"
+                        style={{ border: "1px solid var(--ui-border-soft)", color: "var(--ui-text-dim)" }}
+                      >
+                        {inner}
+                      </div>
+                    );
+                  })}
                 </div>
               </Section>
             )}

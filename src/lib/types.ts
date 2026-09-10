@@ -121,6 +121,16 @@ export interface FactPreview {
   rows: string[][];
 }
 
+/** Somewhere a reader can go to see this step for themselves — a dashboard, a queue, a
+ *  admin screen. `url` is optional: naming the destination is useful even when there is
+ *  no link to give, and a row without one renders as a label rather than a dead link. */
+export interface FactLink {
+  label: string;
+  url?: string;
+  /** Picks the leading glyph. Defaults to "link". */
+  kind?: "dashboard" | "tool" | "doc" | "query" | "link";
+}
+
 /** The reader-facing facts for one step: shown as a table in the detail panel's Human
  * view and serialised verbatim into its Claude view. Every field is optional, so a step
  * with no facts renders its description alone rather than an empty table. */
@@ -135,6 +145,8 @@ export interface NodeFacts {
   dataRef?: string;
   /** A sample of the list this stage appears in. */
   preview?: FactPreview;
+  /** Where to go to see this step live. Rendered as the "Go to" section. */
+  links?: FactLink[];
 }
 
 export type ConnType = "" | "cyes" | "cno" | "camber";

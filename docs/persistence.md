@@ -143,7 +143,21 @@ Version snapshots are pruned on write: the 50 most recent per slug are kept.
 
 ## Database
 
-`supabase-migration.sql`, run once in the Supabase SQL editor:
+`supabase-migration.sql`, then `supabase-migration-2.sql`, run in the Supabase SQL
+editor. Both are idempotent.
+
+Migration 2 moves durability into the database rather than trusting the client for it:
+`updated_at` is set by a trigger (the gallery sorts on it, and two saves landing out of
+order could move it backwards); a snapshot is written to `flowchart_versions` before any
+write that changes the document, throttled to a 5-minute cadence plus any write that
+changes the node count by 10% or more; those snapshots are pruned to the most recent 50
+per slug; and RLS is enabled with no policy, which closes the tables to the anon key
+without affecting the app (every query goes through an API route on the service role).
+It also carries a commented-out trigger that refuses a write shrinking a diagram by 80%
+or more — the shape of an incident that has actually happened here, left off because
+"select all, delete" is legitimate and the snapshot already makes it recoverable.
+
+Migration 1:
 
 - `flowcharts.archived boolean not null default false` (+ index)
 - `flowchart_versions` — append-only `(id, slug, nodes, connections, node_count,

@@ -214,22 +214,6 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
     }
   }, [availableLevels, level]);
 
-  // Readers get both rails open. The left rail is how you choose what to look at and the
-  // right panel is where all the card detail went, so a reader landing with both collapsed
-  // sees a bare canvas and no way into it. Forced only on *entering* view — collapsing
-  // them afterwards is the reader's choice and is respected.
-  const openedForView = useRef(false);
-  useEffect(() => {
-    if (mode !== "view") {
-      openedForView.current = false;
-      return;
-    }
-    if (openedForView.current) return;
-    openedForView.current = true;
-    setShowLeft(true);
-    setShowRight(true);
-  }, [mode]);
-
   // Mirror of `level` for event handlers, assigned during render like the other mirrors
   // in this file. Using a ref rather than a dependency keeps a level switch from
   // re-creating all ~30 mutation callbacks.
@@ -362,6 +346,29 @@ export default function FlowCanvas({ slug, title, subtitle, exportFilename, read
       );
     } catch {}
   }, [panelsLoaded, showLeft, showRight, zoomOnScroll, mode]);
+
+  // Readers get both rails open. The left rail is how you choose what to look at and the
+  // right panel is where all the card detail went, so a reader landing with both collapsed
+  // sees a bare canvas and no way into it. Forced only on *entering* view — collapsing
+  // them afterwards is the reader's choice and is respected.
+  //
+  // Declared *after* the effect that loads the stored preferences, and gated on
+  // `panelsLoaded`, so it can never be overwritten by them. It used to sit further up:
+  // harmless while the editor was the default mode, because it only ran on a later
+  // toggle, but once every visit started in "view" it ran on mount, raced the stored
+  // preferences and lost — readers got the editor's collapsed right rail and no detail
+  // panel at all.
+  const openedForView = useRef(false);
+  useEffect(() => {
+    if (mode !== "view") {
+      openedForView.current = false;
+      return;
+    }
+    if (!panelsLoaded || openedForView.current) return;
+    openedForView.current = true;
+    setShowLeft(true);
+    setShowRight(true);
+  }, [mode, panelsLoaded]);
 
   const togglePanel = useCallback((side: "left" | "right") => {
     if (side === "left") setShowLeft((v) => !v);
