@@ -393,6 +393,12 @@ export async function readCloudDoc(slug: string): Promise<CloudRead> {
       cacheData(slug, data);
       return { status: "ok", data };
     }
+    // A row with no nodes at all is a metadata stub — written by the archive PATCH for a
+    // builtin nobody had edited yet. That is "nothing stored here", not a failure, and
+    // reporting it as absent is what lets the builtin fall back to its seed. Anything
+    // else present but unusable stays an error, so a malformed document still cannot be
+    // mistaken for permission to overwrite.
+    if (fc && fc.nodes == null) return { status: "absent" };
     return { status: "error" };
   } catch {
     return { status: "error" };
@@ -490,15 +496,19 @@ export function getCachedDiagrams(): DiagramMetadata[] {
   return BUILTIN_DIAGRAMS;
 }
 
-function mergeList(cloud: DiagramMetadata[]): DiagramMetadata[] {
+function mergeList(cloud: DiagramMetadata[], archivedSlugs: string[] = []): DiagramMetadata[] {
   const cloudBySlug = new Map(cloud.map((d) => [d.slug, d]));
+  const isArchived = new Set(archivedSlugs);
   // The cloud row wins for everything the user can edit. This used to keep the
   // hardcoded BUILTIN_DIAGRAMS title/description/color and take only nodeCount and
   // updatedAt from the cloud, which silently reverted every rename of a builtin: the
   // POST reached Supabase, then the next list fetch overwrote it again. The constants
   // are a seed and an offline fallback, not the source of truth. `isCustom` still comes
-  // from BUILTIN_SLUGS so a renamed builtin keeps its grouping and stays unarchivable.
-  const builtin = BUILTIN_DIAGRAMS.map((b) => {
+  // from BUILTIN_SLUGS so a renamed builtin keeps its grouping.
+  //
+  // A builtin listed in `archivedSlugs` is dropped here. Without that the constant would
+  // put it straight back on every refresh, which is why builtins used to be unarchivable.
+  const builtin = BUILTIN_DIAGRAMS.filter((b) => !isArchived.has(b.slug)).map((b) => {
     const c = cloudBySlug.get(b.slug);
     if (!c) return b;
     return {
@@ -523,7 +533,7 @@ export async function fetchCloudDiagrams(): Promise<DiagramMetadata[]> {
     if (res.ok) {
       const json = await res.json();
       const cloud: DiagramMetadata[] = json.flowcharts || [];
-      const merged = mergeList(cloud);
+      const merged = mergeList(cloud, json.archivedSlugs || []);
       try {
         localStorage.setItem(LIST_CACHE_KEY, JSON.stringify(merged));
       } catch {}
@@ -592,7 +602,21 @@ export async function fetchArchivedDiagrams(): Promise<DiagramMetadata[]> {
     const res = await fetch("/api/flowcharts?archived=1", { cache: "no-store" });
     if (res.ok) {
       const json = await res.json();
-      return (json.flowcharts || []) as DiagramMetadata[];
+      const rows = (json.flowcharts || []) as DiagramMetadata[];
+      // An archived builtin may be a metadata-only stub with no title, so it would render
+      // as a blank row. The constant is the seed for exactly this case.
+      return rows.map((r) => {
+        const b = BUILTIN_DIAGRAMS.find((x) => x.slug === r.slug);
+        if (!b) return r;
+        return {
+          ...b,
+          ...r,
+          title: r.title || b.title,
+          description: r.description || b.description,
+          color: r.color || b.color,
+          isCustom: false,
+        };
+      });
     }
   } catch {}
   return [];

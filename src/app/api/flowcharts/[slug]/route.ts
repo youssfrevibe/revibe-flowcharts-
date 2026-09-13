@@ -73,10 +73,26 @@ export async function PATCH(
     }
     patch.updated_at = new Date().toISOString();
 
-    const { error } = await supabaseAdmin
+    const { data: updated, error } = await supabaseAdmin
       .from("flowcharts")
       .update(patch)
-      .eq("slug", slug);
+      .eq("slug", slug)
+      .select("slug");
+
+    // A builtin that nobody has edited yet has no row, so there is nothing to update and
+    // archiving it would silently do nothing. Insert a metadata-only stub instead —
+    // deliberately without nodes or connections, because this route must never write a
+    // document. `readCloudDoc` reads a row with no nodes as "not stored yet" and falls
+    // back to the builtin seed, so the diagram is unchanged by having been archived.
+    if (!error && (updated?.length ?? 0) === 0) {
+      const { error: insertError } = await supabaseAdmin
+        .from("flowcharts")
+        .insert({ slug, ...patch });
+      if (insertError) {
+        return NextResponse.json({ error: insertError.message }, { status: 500 });
+      }
+      return NextResponse.json({ success: true, created: true });
+    }
 
     if (error) {
       // Column likely missing — signal that the migration is needed.

@@ -40,6 +40,12 @@ export async function GET(req: Request) {
       }
     }
 
+    // Every archived slug, regardless of which list was asked for. The client needs this
+    // to tell an archived builtin from one that simply has no row yet: builtins are
+    // re-added to the gallery from a constant, so without it an archived builtin would
+    // reappear on the next refresh.
+    const archivedSlugs = (rows || []).filter((r) => r.archived === true).map((r) => r.slug);
+
     const filtered = (rows || []).filter((row) => {
       if (!hasArchived) return !wantArchived; // no archive support → only serve the main list
       return wantArchived ? row.archived === true : row.archived !== true;
@@ -55,7 +61,7 @@ export async function GET(req: Request) {
       updatedAt: row.updated_at,
     }));
 
-    return NextResponse.json({ flowcharts });
+    return NextResponse.json({ flowcharts, archivedSlugs });
   } catch (err: any) {
     return NextResponse.json({ error: err.message, flowcharts: [] }, { status: 500 });
   }
