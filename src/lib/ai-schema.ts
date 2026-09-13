@@ -11,7 +11,7 @@
  * grounded in the flow as it exists right now.
  */
 
-import { FlowConnection, FlowData, FlowNode } from "./types";
+import { CONDITION_OPS, FlowConnection, FlowData, FlowNode, NodeCondition, parseConditionText } from "./types";
 import type { LevelPlan, LevelPlanConn, LevelPlanNode, LevelPlanTier } from "./ai-levels";
 import {
   ACTORS,
@@ -38,7 +38,7 @@ const FIELD_REFERENCE = `NODE FIELDS (all optional except type/label):
 - "detail": longer explanation of what happens at this step.
 - "actor": who performs the step — ${list(ACTORS)}. "customer" = the customer themselves,
   "revibe" = our team, "seller" = seller/supplier, "system" = automated,
-  "carrier" = courier/shipping partner, "lab" = lab/Naif inspection and QC.
+  "carrier" = courier/shipping partner, "lab" = lab inspection and QC.
   Set this whenever it is knowable.
 - "internalStage": the OMS column \`return_claim_stage\` — the stage the team tracks internally
   (e.g. "Pending LAB collection", "Invalid claim", "Under revision"). Free text.
@@ -138,6 +138,13 @@ export function describeFlow(data: FlowData, title?: string): string {
     if (n.actor) parts.push(`actor=${n.actor}`);
     if (n.internalStage) parts.push(`return_claim_stage="${clip(n.internalStage, 80)}"`);
     if (n.externalStage) parts.push(`stage="${clip(n.externalStage, 80)}"`);
+    if (n.conditions?.length)
+      parts.push(
+        `conditions=[${n.conditions
+          .slice(0, 8)
+          .map((c) => `${clip(c.field, 60)} ${c.op ?? "="} ${clip(c.value, 60)}`)
+          .join(" | ")}]`
+      );
     if (n.sla) parts.push(`sla="${clip(n.sla, 40)}"`);
     if (n.inputs) parts.push(`inputs="${clip(n.inputs, 120)}"`);
     if (n.outputs) parts.push(`outputs="${clip(n.outputs, 120)}"`);
@@ -204,6 +211,28 @@ export function sanitizeNodePatch(raw: unknown): Partial<FlowNode> {
   for (const key of ["inputs", "outputs"] as const) {
     const v = str(r[key], 1000);
     if (v !== undefined) out[key] = v;
+  }
+
+  // Conditions arrive either as objects or as "field = value" strings, depending on how
+  // literally the model followed the schema. Both are accepted and normalized here, so a
+  // correct rule is never dropped for being written in the wrong shape.
+  if (Array.isArray(r.conditions)) {
+    const conds: NodeCondition[] = [];
+    for (const item of r.conditions.slice(0, 8)) {
+      if (typeof item === "string") {
+        const parsed = parseConditionText(item.slice(0, 160));
+        if (parsed) conds.push(parsed);
+        continue;
+      }
+      if (!item || typeof item !== "object") continue;
+      const o = item as { field?: unknown; op?: unknown; value?: unknown };
+      const field = str(o.field, 80)?.trim();
+      if (!field) continue;
+      const op = inSet(CONDITION_OPS, o.op);
+      const value = (str(o.value, 120) ?? "").trim();
+      conds.push(op && op !== "=" ? { field, op, value } : { field, value });
+    }
+    out.conditions = conds;
   }
 
   const tools = strArray(r.tools, 20, 60);

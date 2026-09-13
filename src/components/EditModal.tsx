@@ -1,6 +1,6 @@
 "use client";
 
-import { Actor, FlowNode, NodeType, TextPosition, TextAlign, TextSize, NodeWidth } from "@/lib/types";
+import { Actor, FlowNode, NodeType, TextPosition, TextAlign, TextSize, NodeWidth, parseConditionText } from "@/lib/types";
 import { NODE_COLOR_PRESETS, NOTE_COLOR_PRESETS, getNodeStyle, getNodeFill, DEFAULT_TYPE_FILL, ACTOR_STYLES, ACTOR_ORDER } from "@/lib/node-colors";
 import React, { useState, useEffect, useRef } from "react";
 
@@ -57,6 +57,9 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
   const [sla, setSla] = useState("");
   const [internalStage, setInternalStage] = useState("");
   const [externalStage, setExternalStage] = useState("");
+  // Authored as text, one rule per line — the same shape as the procedure box below, and
+  // the shape a person actually types a rule in. Parsed into objects on save.
+  const [conditions, setConditions] = useState("");
   const [actor, setActor] = useState<Actor | "">("");
   const [agentSteps, setAgentSteps] = useState("");
   const [color, setColor] = useState<string>("");
@@ -80,6 +83,9 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
       // `stage` so a node saved before the split still fills the modal correctly.
       setInternalStage(node.internalStage || node.stage || "");
       setExternalStage(node.externalStage || node.stage || "");
+      setConditions(
+        (node.conditions || []).map((c) => `${c.field} ${c.op ?? "="} ${c.value}`).join("\n")
+      );
       setActor(node.actor || "");
       setAgentSteps((node.agentSteps || []).join("\n"));
       setColor(node.color || "");
@@ -135,6 +141,13 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
       .map((s) => s.trim())
       .filter(Boolean);
 
+    // One rule per line. A line with no operator still parses (bare field, empty value)
+    // rather than vanishing, so a half-typed rule is visible instead of silently lost.
+    const parsedConditions = conditions
+      .split("\n")
+      .map((line) => parseConditionText(line))
+      .filter((c): c is NonNullable<typeof c> => c !== null);
+
     onSave({
       ...node,
       type,
@@ -146,6 +159,7 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
       // save so a re-saved diagram carries only the new schema.
       internalStage: internalStage.trim() || undefined,
       externalStage: externalStage.trim() || undefined,
+      conditions: parsedConditions.length ? parsedConditions : undefined,
       stage: undefined,
       stageKind: undefined,
       actor: actor || undefined,
@@ -350,6 +364,26 @@ export default function EditModal({ node, onSave, onDelete, onDuplicate, onClose
                     onChange={(e) => setExternalStage(e.target.value)}
                     placeholder="e.g. 19. Expert revision"
                     className="w-full px-3.5 py-2 rounded-lg border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-900 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+
+                {/* Field rules that hold *while* the claim is on this card. A shipment
+                    status belongs here, not on a card of its own: it is a column that is
+                    true during a stage, and drawing it as a separate box made readers
+                    trace it as a step the claim passes through. Name the column exactly as
+                    the database spells it — pickup_shipment_status, naif_shipment_status,
+                    return_shipment_status — so a card maps straight onto a query. */}
+                <div className="pt-1">
+                  <label className="mb-1 block font-mono text-[10px] font-semibold text-zinc-400">
+                    conditions{" "}
+                    <span className="text-[9px] tracking-wider">(ONE PER LINE, field = value)</span>
+                  </label>
+                  <textarea
+                    value={conditions}
+                    onChange={(e) => setConditions(e.target.value)}
+                    rows={3}
+                    placeholder={"pickup_shipment_status = Shipped\nreturn_shipment_status = Created"}
+                    className="w-full resize-y rounded-lg border border-zinc-300 bg-white px-3.5 py-2 font-mono text-[11px] text-zinc-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100"
                   />
                 </div>
               </div>

@@ -145,7 +145,7 @@ export const ACTOR_STYLES: Record<Actor, ActorStyle> = {
   },
   lab: {
     id: "lab",
-    label: "Lab / Naif",
+    label: "Lab",
     shortLabel: "Lab",
     icon: "lab",
     desc: "Inspection, diagnostics and QC at the lab",

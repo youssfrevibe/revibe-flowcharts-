@@ -1,11 +1,14 @@
 import {
   ACTOR_IDS,
   Actor,
+  CONDITION_OPS,
   DiagramMetadata,
   FlowData,
   FlowNode,
   NODE_TYPE_IDS,
+  NodeCondition,
   NodeType,
+  parseConditionText,
 } from "./types";
 import { DEFAULT_LEVEL } from "./levels";
 import { getInitialNodes, getInitialConnections } from "./initial-data";
@@ -240,7 +243,54 @@ function migrateNodeFields(
     };
   }
 
+  next = normalizeConditions(next);
+
   return next;
+}
+
+/**
+ * Brings `conditions` onto the object form the renderer expects.
+ *
+ * Hand-written JSON — and every export produced before `conditions` existed — writes a
+ * rule as one string, `"pickup_shipment_status = Shipped"`. Parsing that here rather than
+ * at each render site means the card, the detail panel, the Claude view and the exporter
+ * all see the same shape, and a rule typed by hand into a JSON file is not silently
+ * dropped. A string with no recognisable operator becomes a bare `field` with an empty
+ * value, which still renders — better a chip reading the raw text than a lost rule.
+ */
+function normalizeConditions(node: FlowNode): FlowNode {
+  const raw = (node as FlowNode & { conditions?: unknown }).conditions;
+  if (raw === undefined) return node;
+  if (!Array.isArray(raw)) {
+    const { conditions, ...rest } = node;
+    void conditions;
+    return rest;
+  }
+
+  const out: NodeCondition[] = [];
+  for (const item of raw) {
+    if (typeof item === "string") {
+      const parsed = parseConditionText(item);
+      if (parsed) out.push(parsed);
+      continue;
+    }
+    if (!item || typeof item !== "object") continue;
+    const o = item as { field?: unknown; op?: unknown; value?: unknown };
+    const field = typeof o.field === "string" ? o.field.trim() : "";
+    if (!field) continue;
+    const op = CONDITION_OPS.includes(o.op as (typeof CONDITION_OPS)[number])
+      ? (o.op as NodeCondition["op"])
+      : undefined;
+    const value = o.value === undefined || o.value === null ? "" : String(o.value).trim();
+    out.push(op && op !== "=" ? { field, op, value } : { field, value });
+  }
+
+  if (!out.length) {
+    const { conditions, ...rest } = node;
+    void conditions;
+    return rest;
+  }
+  return { ...node, conditions: out };
 }
 
 /* ----------------------------- local cache ----------------------------- */

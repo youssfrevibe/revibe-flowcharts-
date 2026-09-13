@@ -70,6 +70,10 @@ function toClaudeView(node: FlowNode, data: FlowData, doc: FlowData): string {
   push("sla", node.sla);
   push("internal_stage", node.internalStage);
   push("external_stage", node.externalStage);
+  if (node.conditions?.length) {
+    L.push("conditions:");
+    for (const c of node.conditions) L.push(`  - ${c.field} ${c.op ?? "="} ${c.value}`);
+  }
   if (node.detail) {
     L.push("description: |");
     for (const line of node.detail.split("\n")) L.push(`  ${line}`);
@@ -484,6 +488,29 @@ export default function NodeDetailPanel({
                         r.value
                       )}
                     </Fact>
+                  ))}
+                </div>
+              </Section>
+            )}
+
+            {/* The field rules that hold while a claim sits here. Kept out of "The facts"
+                because these are not one-per-label single values — a stage can assert on
+                several columns at once, and a fact row keyed by its label would collide. */}
+            {!!node.conditions?.length && (
+              <Section title="True while here">
+                <div className="flex flex-col gap-1.5">
+                  {node.conditions.map((c, i) => (
+                    <div
+                      key={`${c.field}-${i}`}
+                      className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-[11.5px]"
+                      style={{ borderColor: "var(--ui-border-soft)", background: "var(--ui-input)" }}
+                    >
+                      <span style={{ color: "var(--ui-text-dim)" }}>{c.field}</span>
+                      <span style={{ color: "var(--ui-text-faint)" }}>{c.op ?? "="}</span>
+                      <span className="font-semibold" style={{ color: "var(--ui-text)" }}>
+                        {c.value}
+                      </span>
+                    </div>
                   ))}
                 </div>
               </Section>

@@ -50,7 +50,7 @@ const PATHS: Record<Actor, React.ReactNode> = {
       <circle cx="16.5" cy="17.5" r="1.8" />
     </>
   ),
-  // Lab / Naif — a beaker.
+  // Lab — a beaker.
   lab: (
     <>
       <path d="M9.5 3v6.2L4.8 17.4A2 2 0 0 0 6.5 20.5h11a2 2 0 0 0 1.7-3.1L14.5 9.2V3" />

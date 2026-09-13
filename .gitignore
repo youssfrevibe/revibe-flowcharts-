@@ -45,3 +45,9 @@ next-env.d.ts
 
 # Local backups of live flowchart data — snapshots, not source.
 /backups/
+
+# Local agent / skill tooling config — per-machine, not part of the app.
+/.agents/
+/.claude/skills/
+# ripgrep's ignore file, which only re-admits graft/ to search locally.
+/.ignore

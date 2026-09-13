@@ -127,11 +127,44 @@ function FlowNodeCard({
   const internalStage = (node.internalStage || "").trim() || null;
   const externalStage = (node.externalStage || "").trim() || null;
   const legacyStage = (node.stage || "").trim() || null;
-  const hasStageBlock = internalStage || externalStage || legacyStage;
+  const conditions = (node.conditions ?? []).filter((c) => c && c.field);
+  // One gate for the whole badge block. A node can carry conditions with no stage at all
+  // (a decision that only asserts on a field), so this cannot key off the stages alone —
+  // it did, and every such card rendered its rules nowhere.
+  const hasStageBlock = Boolean(internalStage || externalStage || legacyStage || conditions.length);
   const stagesShared = internalStage && externalStage && internalStage === externalStage;
 
   // Cards follow the theme now, so the stage badges do too — there is no longer a
   // "dark node" case to special-case against.
+  /** The field rules that hold while the claim sits here — a shipment status, a flag.
+   *  Mono, and always `field = value`, so a card reads the same way as the query that
+   *  would find the claims on it. */
+  const renderConditions = () => {
+    if (!conditions.length) return null;
+    return (
+      <div className="mt-1 flex flex-wrap gap-1">
+        {conditions.map((c, i) => (
+          <div
+            key={`${c.field}-${i}`}
+            className="inline-flex items-center gap-1 rounded border border-dashed px-1.5 py-0.5 font-mono text-[9px] leading-tight"
+            style={{
+              borderColor: "var(--ui-border)",
+              background: "var(--ui-hover)",
+              color: "var(--ui-text-dim)",
+            }}
+            title={`${c.field} ${c.op ?? "="} ${c.value}`}
+          >
+            <span className="opacity-70">{c.field}</span>
+            <span className="opacity-50">{c.op ?? "="}</span>
+            <span className="font-semibold" style={{ color: "var(--ui-text)" }}>
+              {c.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   const renderStageLines = () => {
     if (!hasStageBlock) return null;
     const badgeCls =
@@ -140,13 +173,17 @@ function FlowNodeCard({
 
     if (stagesShared && internalStage) {
       return (
-        <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium border ${badgeCls}`}>
-          <span className={`text-[8.5px] uppercase font-bold tracking-wider ${labelCls}`}>Stage</span>
-          <span className="font-semibold">{internalStage}</span>
+        <div>
+          <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium border ${badgeCls}`}>
+            <span className={`text-[8.5px] uppercase font-bold tracking-wider ${labelCls}`}>Stage</span>
+            <span className="font-semibold">{internalStage}</span>
+          </div>
+          {renderConditions()}
         </div>
       );
     }
     return (
+      <div>
       <div className="flex flex-wrap gap-1">
         {internalStage && (
           <div className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] border ${badgeCls}`}>
@@ -166,6 +203,8 @@ function FlowNodeCard({
             <span className="font-semibold">{legacyStage}</span>
           </div>
         )}
+      </div>
+      {renderConditions()}
       </div>
     );
   };

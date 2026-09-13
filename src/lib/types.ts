@@ -34,7 +34,7 @@ export type DetailLevel = 1 | 2 | 3;
  *   seller   → Seller / supplier (amber)
  *   system   → Automation — engine, webhook, script (green)
  *   carrier  → Courier / shipping partner (grey)
- *   lab      → Lab / Naif — inspection and QC (pink)
+ *   lab      → Lab — inspection and QC (pink)
  */
 export const ACTOR_IDS = ["customer", "revibe", "seller", "system", "carrier", "lab"] as const;
 export type Actor = (typeof ACTOR_IDS)[number];
@@ -46,6 +46,53 @@ export type Actor = (typeof ACTOR_IDS)[number];
  * next save. See [[FlowNode.internalStage]] and [[FlowNode.externalStage]].
  */
 export type StageKind = "internal" | "external" | "IS" | "ES" | "IS+ES";
+
+/** The comparisons a [[NodeCondition]] can make. Defaults to "=", which is what almost
+ * every real rule is. */
+export const CONDITION_OPS = ["=", "!=", "in", ">", ">=", "<", "<="] as const;
+export type ConditionOp = (typeof CONDITION_OPS)[number];
+
+/**
+ * One field-level rule that holds while a claim sits on this node — the shipment status,
+ * a flag, a payment state.
+ *
+ * These used to be drawn as their own cards ("pickup_shipment_status = Shipped" sitting
+ * between two stages), which made the flow read as if the status were a step the claim
+ * passes through. It is not: it is a column on the claim that is *true while the claim is
+ * in that stage*. Folding it into the stage card is what stops a reader tracing a status
+ * as if it were a transition.
+ *
+ * `field` is written exactly as the database spells the column — `pickup_shipment_status`,
+ * `naif_shipment_status`, `return_shipment_status`, `information_complete` — so a card can
+ * be mapped onto a query without a translation table. See `docs/node-template.md`.
+ */
+export interface NodeCondition {
+  field: string;
+  /** Defaults to "=" when absent. */
+  op?: ConditionOp;
+  value: string;
+}
+
+/** `"naif_shipment_status != Failed"` -> `{ field, op, value }`. Longest operators are
+ *  tried first so `>=` is not read as `>` with a stray `=` in the value. Lives here, with
+ *  the type, rather than in the store: the API routes sanitize model output with it and
+ *  must not pull the browser-side document store onto the server to do so. */
+export function parseConditionText(text: string): NodeCondition | null {
+  const s = text.trim();
+  if (!s) return null;
+  for (const op of ["!=", ">=", "<=", "=", ">", "<"] as const) {
+    const at = s.indexOf(op);
+    if (at > 0) {
+      const field = s.slice(0, at).trim();
+      const value = s.slice(at + op.length).trim();
+      if (!field) return null;
+      return op === "=" ? { field, value } : { field, op, value };
+    }
+  }
+  const inMatch = s.match(/^(\S+)\s+in\s+(.+)$/i);
+  if (inMatch) return { field: inMatch[1], op: "in", value: inMatch[2].trim() };
+  return { field: s, value: "" };
+}
 
 export interface FlowNode {
   id: string;
@@ -96,6 +143,10 @@ export interface FlowNode {
   /** The stage name shown to the customer (e.g. "Expert revision", "Under QC"). Free
    * text. Renders as `external_stage = <value>`. Omit to hide the external line. */
   externalStage?: string;
+  /** Field-level rules that hold while the claim is on this node, rendered as mono chips
+   * under the stage badges. This is where a shipment status belongs — on the stage card
+   * it describes, not as a card of its own. See [[NodeCondition]]. */
+  conditions?: NodeCondition[];
   /** Who performs this action — controls the card's border color so responsibility is
    * visually scannable across the flow. See [[Actor]]. */
   actor?: Actor;
