@@ -51,3 +51,6 @@ next-env.d.ts
 /.claude/skills/
 # ripgrep's ignore file, which only re-admits graft/ to search locally.
 /.ignore
+
+# Built from src/lib/flow-standards.ts by `npm run mcp:build` — not source.
+/mcp/flow-standards.js

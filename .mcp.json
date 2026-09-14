@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "revibe-diagrams": {
+      "command": "node",
+      "args": ["mcp/index.mjs"],
+      "env": {
+        "REVIBE_BASE_URL": "http://localhost:3000",
+        "REVIBE_API_KEY": "${REVIBE_API_KEY}"
+      }
+    }
+  }
+}
