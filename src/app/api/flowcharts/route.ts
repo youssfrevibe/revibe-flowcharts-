@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-client";
+import { refuseMassDelete, requireWriteKey } from "@/lib/api-guard";
 
 export async function GET(req: Request) {
   try {
@@ -69,6 +70,9 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
+    const denied = requireWriteKey(req);
+    if (denied) return denied;
+
     const body = await req.json();
     const { slug, title, description, nodes, connections, color, isCustom } = body;
 
@@ -77,6 +81,13 @@ export async function POST(req: Request) {
     }
 
     const nodeCount = Array.isArray(nodes) ? nodes.length : 0;
+
+    // Only a write that actually carries nodes can shrink a document; a metadata-shaped
+    // POST with no `nodes` array must not be measured against the stored count.
+    if (Array.isArray(nodes)) {
+      const tooSmall = await refuseMassDelete(slug, nodeCount, body.force === true);
+      if (tooSmall) return tooSmall;
+    }
 
     // A document save with no title must not invent one.
     //

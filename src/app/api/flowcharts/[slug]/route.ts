@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-client";
+import { requireWriteKey } from "@/lib/api-guard";
 
 export async function GET(
   req: Request,
@@ -59,6 +60,9 @@ export async function PATCH(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   try {
+    const denied = requireWriteKey(req);
+    if (denied) return denied;
+
     const { slug } = await params;
     const body = await req.json();
 
@@ -112,6 +116,9 @@ export async function DELETE(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   try {
+    const denied = requireWriteKey(req);
+    if (denied) return denied;
+
     const { slug } = await params;
     const { error } = await supabaseAdmin
       .from("flowcharts")

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-client";
+import { requireWriteKey } from "@/lib/api-guard";
 
 /**
  * Version history for a flowchart. Backed by the `flowchart_versions` table
@@ -47,6 +48,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ slug: st
 // POST /api/flowcharts/[slug]/versions → save a snapshot { nodes, connections, label, author }
 export async function POST(req: Request, { params }: { params: Promise<{ slug: string }> }) {
   try {
+    const denied = requireWriteKey(req);
+    if (denied) return denied;
+
     const { slug } = await params;
     const body = await req.json();
     const { nodes, connections, label, author } = body;
