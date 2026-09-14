@@ -74,6 +74,13 @@
   --rv-warning: #f59e0b;
   --rv-danger: #ef4444;
   --rv-info: #3b82f6;
+  /* The external stage is what the customer is shown, so it gets its own hue rather than
+     the same grey as the internal one; the condition chips get a purple hairline so a rule
+     reads as a rule and not as a disabled control. */
+  --rv-blue-deep: #1d4ed8;
+  --rv-blue-soft: #e8effe;
+  --rv-blue-line: rgba(37, 99, 235, 0.28);
+  --rv-purple-line: rgba(124, 58, 237, 0.22);
 }
 
 .dark {
@@ -83,9 +90,19 @@
      every other row was most of what made the dark theme look violet. */
   --rv-pink-soft: rgba(255, 46, 99, 0.16);
   --rv-purple-soft: rgba(167, 139, 250, 0.16);
+  /* The deep purple is only ever ink on the soft wash above. That wash inverts for dark
+     mode but the ink did not, so every chip using the pair — the signposts, the data-ref
+     row, the tour, the condition chips — was dark purple on a dark ground. */
+  --rv-purple-deep: #c4b5fd;
   --rv-lavender: rgba(255, 255, 255, 0.035);
   --rv-lavender-deep: rgba(255, 255, 255, 0.06);
   --rv-gradient-soft: linear-gradient(135deg, rgba(255, 46, 99, 0.14) 0%, rgba(124, 58, 237, 0.16) 100%);
+  /* Same two accents, re-mixed for a near-black ground: the deep values have to lift to
+     stay legible, and the washes drop to a tint rather than a pastel. */
+  --rv-blue-deep: #93b4fd;
+  --rv-blue-soft: rgba(96, 165, 250, 0.16);
+  --rv-blue-line: rgba(96, 165, 250, 0.32);
+  --rv-purple-line: rgba(167, 139, 250, 0.30);
 }
 
 .rv-gradient-text {

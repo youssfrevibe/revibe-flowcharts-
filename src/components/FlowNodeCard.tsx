@@ -146,17 +146,17 @@ function FlowNodeCard({
         {conditions.map((c, i) => (
           <div
             key={`${c.field}-${i}`}
-            className="inline-flex items-center gap-1 rounded border border-dashed px-1.5 py-0.5 font-mono text-[9px] leading-tight"
+            className="inline-flex items-center gap-1 rounded-md border px-1.5 py-[3px] font-mono text-[9px] leading-none"
             style={{
-              borderColor: "var(--ui-border)",
-              background: "var(--ui-hover)",
+              borderColor: "var(--rv-purple-line)",
+              background: "var(--rv-purple-soft)",
               color: "var(--ui-text-dim)",
             }}
             title={`${c.field} ${c.op ?? "="} ${c.value}`}
           >
             <span className="opacity-70">{c.field}</span>
             <span className="opacity-50">{c.op ?? "="}</span>
-            <span className="font-semibold" style={{ color: "var(--ui-text)" }}>
+            <span className="font-semibold" style={{ color: "var(--rv-purple-deep)" }}>
               {c.value}
             </span>
           </div>
@@ -167,16 +167,44 @@ function FlowNodeCard({
 
   const renderStageLines = () => {
     if (!hasStageBlock) return null;
-    const badgeCls =
-      "bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700";
-    const labelCls = "text-zinc-500 dark:text-zinc-400";
+    // Two columns, two audiences, two colours. Internal is the team's own tracking, so it
+    // takes the card's ink; external is what the customer is shown, so it takes a distinct
+    // hue. They used to be identical grey pills, which is how a reader ends up asking
+    // which of the two they are looking at.
+    const badge = (
+      kind: "internal" | "external" | "shared",
+      label: string,
+      value: string
+    ) => {
+      const tone =
+        kind === "external"
+          ? { bg: "var(--rv-blue-soft)", fg: "var(--rv-blue-deep)", br: "var(--rv-blue-line)" }
+          : { bg: "var(--ui-input)", fg: "var(--ui-text)", br: "var(--ui-border)" };
+      return (
+        <div
+          className="inline-flex items-center gap-1.5 rounded-md border px-1.5 py-[3px] text-[9.5px] leading-none"
+          style={{ background: tone.bg, borderColor: tone.br }}
+          title={`${label}: ${value}`}
+        >
+          <span
+            className="text-[8px] font-bold uppercase tracking-[0.09em]"
+            style={{ color: kind === "external" ? tone.fg : "var(--ui-text-faint)", opacity: kind === "external" ? 0.75 : 1 }}
+          >
+            {label}
+          </span>
+          <span className="font-semibold" style={{ color: tone.fg }}>
+            {value}
+          </span>
+        </div>
+      );
+    };
 
     if (stagesShared && internalStage) {
       return (
         <div>
-          <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium border ${badgeCls}`}>
-            <span className={`text-[8.5px] uppercase font-bold tracking-wider ${labelCls}`}>Stage</span>
-            <span className="font-semibold">{internalStage}</span>
+          <div className="flex flex-wrap gap-1">
+            {badge("internal", "Internal", internalStage)}
+            {externalStage && badge("external", "External", externalStage)}
           </div>
           {renderConditions()}
         </div>
@@ -184,27 +212,12 @@ function FlowNodeCard({
     }
     return (
       <div>
-      <div className="flex flex-wrap gap-1">
-        {internalStage && (
-          <div className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] border ${badgeCls}`}>
-            <span className={`text-[8px] uppercase font-bold tracking-wider ${labelCls}`}>Internal</span>
-            <span className="font-semibold">{internalStage}</span>
-          </div>
-        )}
-        {externalStage && (
-          <div className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] border ${badgeCls}`}>
-            <span className={`text-[8px] uppercase font-bold tracking-wider ${labelCls}`}>External</span>
-            <span className="font-semibold">{externalStage}</span>
-          </div>
-        )}
-        {!internalStage && !externalStage && legacyStage && (
-          <div className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] border ${badgeCls}`}>
-            <span className={`text-[8px] uppercase font-bold tracking-wider ${labelCls}`}>Stage</span>
-            <span className="font-semibold">{legacyStage}</span>
-          </div>
-        )}
-      </div>
-      {renderConditions()}
+        <div className="flex flex-wrap gap-1">
+          {internalStage && badge("internal", "Internal", internalStage)}
+          {externalStage && badge("external", "External", externalStage)}
+          {!internalStage && !externalStage && legacyStage && badge("shared", "Stage", legacyStage)}
+        </div>
+        {renderConditions()}
       </div>
     );
   };
@@ -598,10 +611,11 @@ function FlowNodeCard({
             )}
             {node.sla && (
               <span
-                className="rounded px-1.5 py-0.5 font-mono text-[9px] tracking-normal"
+                className="max-w-[150px] shrink-0 truncate rounded px-1.5 py-0.5 font-mono text-[9px] tracking-normal"
                 style={{ background: "var(--ui-hover)", color: "var(--ui-text-dim)" }}
+                title={`SLA ${node.sla}`}
               >
-                SLA {node.sla}
+                SLA {node.sla.split("(")[0].trim()}
               </span>
             )}
           </div>

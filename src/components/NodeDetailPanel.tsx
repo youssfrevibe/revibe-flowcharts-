@@ -178,7 +178,18 @@ const LINK_ICON: Record<string, IconName> = {
  * 34%-wide gutter to find each one. Label left, value right, hairline between: the eye
  * lands on the values as a column of its own.
  */
-function Fact({ label, children }: { label: string; children: React.ReactNode }) {
+function Fact({
+  label,
+  children,
+  tone,
+}: {
+  label: string;
+  children: React.ReactNode;
+  /** Colours the value. Used so the external stage is the same blue here as on the card —
+   *  the two stage columns must be distinguishable wherever they are shown, not only on
+   *  the canvas. */
+  tone?: string;
+}) {
   return (
     <div
       className="flex items-start justify-between gap-4 px-3.5 py-2.5 text-[12.5px] first:rounded-t-xl last:rounded-b-xl"
@@ -187,7 +198,9 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
       <span className="shrink-0" style={{ color: "var(--ui-text-faint)" }}>
         {label}
       </span>
-      <span className="text-right font-semibold">{children}</span>
+      <span className="text-right font-semibold" style={tone ? { color: tone } : undefined}>
+        {children}
+      </span>
     </div>
   );
 }
@@ -257,11 +270,15 @@ function Branches({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="mb-6">
+      {/* The caption carries a rule out to the panel edge. Eight identical grey captions
+          down a column gave the panel no rhythm — a reader could not see where one
+          section stopped and the next began without reading the words. */}
       <h3
-        className="mb-2 text-[10px] font-bold uppercase tracking-[0.08em]"
+        className="mb-2.5 flex items-center gap-2.5 text-[10px] font-bold uppercase tracking-[0.08em]"
         style={{ color: "var(--ui-text-faint)" }}
       >
-        {title}
+        <span className="shrink-0">{title}</span>
+        <span className="h-px grow" style={{ background: "var(--ui-border-soft)" }} />
       </h3>
       {children}
     </section>
@@ -378,14 +395,14 @@ export default function NodeDetailPanel({
   /** Every single-value fact, in reading order, with the empty ones dropped. Built here
    *  rather than inline so the section can be hidden when a step has none. */
   const factRows = useMemo(() => {
-    const rows: { label: string; value: string; mono?: boolean }[] = [];
-    const add = (label: string, value?: string | number, mono?: boolean) => {
+    const rows: { label: string; value: string; mono?: boolean; tone?: string }[] = [];
+    const add = (label: string, value?: string | number, mono?: boolean, tone?: string) => {
       if (value === undefined || value === null || value === "") return;
-      rows.push({ label, value: String(value), mono });
+      rows.push({ label, value: String(value), mono, tone });
     };
     add("Where", facts?.where);
     add("Internal stage", node.internalStage || node.stage);
-    add("External stage", node.externalStage);
+    add("External stage", node.externalStage, false, "var(--rv-blue-deep)");
     add("SLA", node.sla);
     // These two were in the schema, written by the AI, and rendered by nothing at all.
     add("Needs", node.inputs);
@@ -476,7 +493,7 @@ export default function NodeDetailPanel({
               <Section title="The facts">
                 <div className="rounded-xl border" style={{ borderColor: "var(--ui-border-soft)" }}>
                   {factRows.map((r) => (
-                    <Fact key={r.label} label={r.label}>
+                    <Fact key={r.label} label={r.label} tone={r.tone}>
                       {r.mono ? (
                         <code
                           className="rounded px-1.5 py-0.5 font-mono text-[11.5px]"
@@ -503,11 +520,11 @@ export default function NodeDetailPanel({
                     <div
                       key={`${c.field}-${i}`}
                       className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-[11.5px]"
-                      style={{ borderColor: "var(--ui-border-soft)", background: "var(--ui-input)" }}
+                      style={{ borderColor: "var(--rv-purple-line)", background: "var(--rv-purple-soft)" }}
                     >
                       <span style={{ color: "var(--ui-text-dim)" }}>{c.field}</span>
                       <span style={{ color: "var(--ui-text-faint)" }}>{c.op ?? "="}</span>
-                      <span className="font-semibold" style={{ color: "var(--ui-text)" }}>
+                      <span className="font-semibold" style={{ color: "var(--rv-purple-deep)" }}>
                         {c.value}
                       </span>
                     </div>
