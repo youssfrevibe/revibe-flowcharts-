@@ -59,3 +59,11 @@ because they are a second thing to keep correct and they go stale first.
 verify in the browser — and prefer measuring the result (counts, bounding boxes,
 overlaps) over eyeballing a screenshot. A 33,000px-wide diagram looks like a smudge
 either way.
+
+## The flowcharts themselves
+
+An MCP server, **revibe-diagrams**, reads and writes the process maps through the app's own
+API. Use it rather than asking anyone to export and re-import JSON. `describe_flowchart`
+before `read_flowchart`; `validate_flowchart` before calling a flow finished;
+`snapshot_flowchart` before any write. The card standards it checks, the stage columns and
+the two environment variables are in [docs/flowchart-mcp.md](docs/flowchart-mcp.md).
