@@ -29,6 +29,29 @@ After editing `src/lib/flow-standards.ts`, rebuild the copy the MCP uses:
 npm run mcp:build
 ```
 
+## Giving it to the team
+
+`.mcp.json` is committed, so a teammate who clones the repo already has the server
+registered. What they still have to do:
+
+```bash
+git clone <repo> && cd revibe-flowcharts-
+npm install                 # also compiles the validator the MCP needs
+cp .env.example .env.local  # then fill in REVIBE_API_KEY and REVIBE_BASE_URL
+```
+
+`npm install` runs `prepare`, which builds `mcp/flow-standards.js`. That file is generated
+and gitignored, so without this step the server starts and immediately fails on a missing
+import — worth knowing if anyone skips the install.
+
+`.mcp.json` reads `REVIBE_API_KEY` from the environment rather than holding it, so the
+secret is never committed. Each person needs it exported in their shell, or set in
+`.env.local` and loaded by whatever they use to launch their editor.
+
+**Point them at the deployed app, not localhost.** With `REVIBE_BASE_URL` set to the Vercel
+URL, nobody needs to run `npm run dev` to use the tools, and everyone is looking at the same
+flowcharts. Keep `http://localhost:3000` only for working on the server itself.
+
 ## The prompt
 
 Paste this at the start of a session, or keep it in `CLAUDE.md` so it always applies.
