@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "mcp:build": "tsc src/lib/flow-standards.ts --outDir mcp --module es2022 --target es2022 --moduleResolution bundler --skipLibCheck && node -e \"require('fs').rmSync('mcp/types.js',{force:true})\"",
+    "mcp:build": "tsc src/lib/flow-standards.ts src/lib/mcp-tools.ts --outDir mcp --module es2022 --target es2022 --moduleResolution bundler --skipLibCheck && node mcp/fix-imports.mjs",
     "mcp": "node mcp/index.mjs",
     "prepare": "npm run mcp:build"
   },

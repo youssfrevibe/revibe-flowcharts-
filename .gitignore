@@ -54,3 +54,4 @@ next-env.d.ts
 
 # Built from src/lib/flow-standards.ts by `npm run mcp:build` — not source.
 /mcp/flow-standards.js
+/mcp/mcp-tools.js

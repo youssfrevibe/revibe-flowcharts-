@@ -31,8 +31,35 @@ npm run mcp:build
 
 ## Giving it to the team
 
-`.mcp.json` is committed, so a teammate who clones the repo already has the server
-registered. What they still have to do:
+The app hosts the server at **`/api/mcp`**. A colleague adds one URL and is finished — no
+clone, no Node, no install, and no way to be running a stale copy of the card standards,
+because the validator deploys with the app.
+
+```
+https://<your-app>.vercel.app/api/mcp?key=<REVIBE_MCP_TOKEN>
+```
+
+They paste that wherever their client takes a remote MCP URL. That is the whole setup.
+
+Three variables make it work, all in Vercel:
+
+| Variable | What it does |
+|---|---|
+| `REVIBE_MCP_TOKEN` | Who may reach `/api/mcp`. This is the value in the URL you hand out. |
+| `REVIBE_API_KEY` | What the tools present when they write. Set it or the write routes stay open. |
+| `REVIBE_BASE_URL` | Optional. Unset, the route talks to whichever deployment served it, so previews test themselves. |
+
+If `REVIBE_API_KEY` is set and `REVIBE_MCP_TOKEN` is not, the route refuses to serve at all
+rather than expose an open endpoint that can write.
+
+A token in a URL is visible in logs and browser history. It is a shared team credential, not
+a per-person identity: rotating `REVIBE_MCP_TOKEN` is the entire revocation story, and it
+cuts off everyone at once.
+
+## Running it locally instead
+
+Only needed to work on the server itself. `.mcp.json` is committed, so a checkout already
+has the stdio version registered:
 
 ```bash
 git clone <repo> && cd revibe-flowcharts-
